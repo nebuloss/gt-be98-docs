@@ -1,0 +1,6 @@
+# scratch / local
+*.bak
+*.orig
+*~
+.DS_Store
+HANDOFF.md
