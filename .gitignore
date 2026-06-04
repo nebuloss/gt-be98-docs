@@ -4,3 +4,8 @@
 *~
 .DS_Store
 HANDOFF.md
+
+# Raw on-device forensic snapshots (nvram dumps, hapd confs, config backups).
+# Kept locally for reference but NEVER committed — they contain device secrets
+# (PSKs, hidden SSID, RADIUS secret, password hash, MACs). This is a PUBLIC repo.
+device-backup/
