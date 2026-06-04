@@ -74,6 +74,53 @@ A reboot alone does NOT revert that file. Safe-test protocol (used here):
   from a *partial* `apply.cgi` payload, not from `sync_apgx_to_wlunit`, which is the
   complete/correct allocator.
 
+## Lightest apply for a new net (P0.2) — `restart_wireless` is the floor [V]
+
+Ladder-tested live (each from an nvram-set + `rc sync_apgx_to_wlunit` state, on apg5/VID40):
+
+| apply command | new BSS (wl3.6) | bridge br40 |
+|---|---|---|
+| `service "restart_sdn 6"` alone | ✗ not up | ✗ missing |
+| `service "restart_apg;restart_sdn 6"` | ✗ not up | ✗ missing |
+| `service "restart_wireless;restart_sdn 6"` | ✓ isup=1 | ✓ exists |
+
+`restart_sdn` only runs `handle_sdn_feature` (firewall/routing/dnsmasq/vpn — the **L3**
+layer; `rc/sdn.c`). `restart_apg`/`apg_start` doesn't create a new driver vif either.
+Instantiating a **new** BSS slot needs the driver rebuilt → **`restart_wireless`** (a
+brief all-radio blip; it takes no arguments, `rc.c:4370`). There is **no per-radio
+`restart_wireless_unit` on stock firmware** (it only exists in the patched-firmware
+scoped-apply path — see [wifi-apply-no-outage.md](wifi-apply-no-outage.md)). So: net
+**create/delete** = one `restart_wireless`; net **edit** = the no-outage primitives below
+(no restart at all).
+
+## No-outage runtime primitives (P0.4) — corrected effective methods [V]
+
+Live-tested on the disposable BSS wl3.6 while the 3 user nets stayed UP throughout.
+**A managed apg BSS is owned by its radio's hostapd**, so the `wl`-level pokes that work
+on driver-owned ifaces are silently overridden here:
+
+| Goal | ❌ ineffective (hostapd re-asserts) | ✅ effective, zero outage |
+|---|---|---|
+| Change SSID | `wl -i <bss> ssid X` (get_config keeps old) | `hostapd_cli -i <bss> set ssid X` + `update_beacon` |
+| Disable a BSS | `wl -i <bss> bss down` (reverted <2s, isup stays 1) | `hostapd_cli -i <bss> disable` (state→DISABLED) |
+| Enable a BSS | — | `hostapd_cli -i <bss> enable` (state→ENABLED, isup→1) |
+| Hide/unhide | (`wl closed` holds the flag) | `wl closed 1\|0` + `hostapd_cli set ignore_broadcast_ssid 1\|0` + `update_beacon` |
+| Move BSS VLAN | — | `brctl delif <oldbr> <bss>` ; `brctl addif <newbr> <bss>` (holds at t+2s) |
+
+These are wired into netctl as `ssid`/`hide`/`show`/`bss`/`bridge` and the per-apg
+`net-edit <apg> ssid <name>` (renames every live BSS of the apg + persists nvram).
+Two gotchas found & fixed in the tool:
+- existence guard must use `ip link show <bss>` (or the hostapd socket), **not**
+  `wl bssid` — the latter errors on a *disabled* BSS, blocking `bss up`.
+- `command -v rc` spuriously fails on this busybox though `rc` runs; netctl scans PATH.
+
+Caveat (unchanged): while `cfg_server`/`mtlancfg` is live it regenerates
+`/tmp/wlX_hapd.conf` and may re-assert these on its triggers — runtime edits are durable
+only across the period until the next `restart_wireless`. The durable equivalent is the
+nvram path (`net-create`/`net-edit` set nvram too; `netctl commit` persists). A
+**no-outage PSK change has no reliable path** while cfg_server owns the conf (hostapd has
+no `reconfigure` verb) → use `net-delete` + `net-create`.
+
 ## RE references
 - `rc` dispatch: `rc.c:540` → `sync_apgx_to_wlunit(NULL)`.
 - header: `cfg_mnt/cfg_mtlan.h` — `_sync_apgx_to_wlunit(int json2jffs, json_object*)`,

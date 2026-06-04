@@ -32,6 +32,16 @@ band** — never all four.
 
 ## What can change with ZERO outage (pure runtime)
 
+> ⚠️ **CORRECTION (2026-06-04, verified on a managed apg BSS — see
+> [netctl-verified.md](netctl-verified.md) P0.4).** On a **hostapd-managed apg BSS**, the
+> driver-level `wl` pokes in the table below are silently **re-asserted by hostapd** and do
+> NOT take effect: `wl -i <bss> ssid X` leaves `get_config`'s ssid unchanged, and `wl -i
+> <bss> bss down` is reverted in <2 s (isup stays 1). The **effective** zero-outage methods
+> are via hostapd: `hostapd_cli -i <bss> set ssid X` + `update_beacon`, and `hostapd_cli -i
+> <bss> disable|enable`. SSID-via-`wl` may still work on a *driver-owned* iface (e.g. the
+> primary), but not on the apg BSS slots netctl manages. The `brctl` VLAN-move and `wl
+> closed` (hide) rows below are confirmed effective.
+
 Verified live; siblings and other radios stay up, no restart:
 
 | Change | Command | Outage |

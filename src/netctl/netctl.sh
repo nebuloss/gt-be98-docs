@@ -71,11 +71,18 @@ cmd_net_list(){
 }
 
 # ---- ZERO-outage runtime edits (safe; one BSS only) -------------------------
-guard_bss(){ is_protected_if "$1" && die "refusing protected interface: $1"; wl -i "$1" bssid >/dev/null 2>&1 || die "no such BSS: $1"; }
-cmd_ssid(){ guard_bss "$1"; wl -i "$1" ssid "$2"; hostapd_cli -i "$1" update_beacon >/dev/null 2>&1 || true; echo "[V] $1 ssid -> $2 (no outage)"; }   # [V]
-cmd_hide(){ guard_bss "$1"; wl -i "$1" closed 1; hostapd_cli -i "$1" update_beacon >/dev/null 2>&1 || true; echo "[V] $1 hidden"; }                     # [V]
-cmd_show(){ guard_bss "$1"; wl -i "$1" closed 0; hostapd_cli -i "$1" update_beacon >/dev/null 2>&1 || true; echo "[V] $1 visible"; }                    # [V]
-cmd_bss(){ guard_bss "$1"; case "$2" in up|down) wl -i "$1" bss "$2";; *) die "bss up|down";; esac; echo "[V] $1 bss $2"; }                             # [V]
+# existence via netdev/hostapd socket — both survive a `hostapd_cli disable`, unlike
+# `wl bssid` (which errors on a disabled BSS, so it can't be used to gate `bss up`). [V]
+guard_bss(){ is_protected_if "$1" && die "refusing protected interface: $1"; ip link show "$1" >/dev/null 2>&1 || [ -e "/var/run/hostapd/$1" ] || die "no such BSS: $1"; }
+# SSID change MUST go through hostapd: on a hostapd-managed BSS `wl ssid` is re-asserted
+# by hostapd and does NOT change the beacon (verified: get_config kept the old ssid).
+# `hostapd_cli set ssid` + `update_beacon` DOES change the broadcast, no outage.    [V]
+cmd_ssid(){ guard_bss "$1"; hostapd_cli -i "$1" set ssid "$2" >/dev/null && hostapd_cli -i "$1" update_beacon >/dev/null; echo "[V] $1 ssid -> $2 (no outage, via hostapd)"; }
+cmd_hide(){ guard_bss "$1"; wl -i "$1" closed 1; hostapd_cli -i "$1" set ignore_broadcast_ssid 1 >/dev/null 2>&1; hostapd_cli -i "$1" update_beacon >/dev/null 2>&1 || true; echo "[V] $1 hidden"; }   # [V]
+cmd_show(){ guard_bss "$1"; wl -i "$1" closed 0; hostapd_cli -i "$1" set ignore_broadcast_ssid 0 >/dev/null 2>&1; hostapd_cli -i "$1" update_beacon >/dev/null 2>&1 || true; echo "[V] $1 visible"; }  # [V]
+# enable/disable via hostapd: `wl bss down` is reverted by the driver in <2s (verified);
+# `hostapd_cli disable`/`enable` durably toggle that one BSS, no outage on siblings.  [V]
+cmd_bss(){ guard_bss "$1"; case "$2" in up) hostapd_cli -i "$1" enable >/dev/null;; down) hostapd_cli -i "$1" disable >/dev/null;; *) die "bss up|down";; esac; echo "[V] $1 bss $2 (via hostapd)"; }
 
 # bridge <bss> <target-br> : move a WiFi BSS between VLAN bridges (the proven
 # brctl primitive — holds, unlike wl bss down).                                   [V]
@@ -177,7 +184,40 @@ cmd_net_delete(){
 	echo "[V] net-delete applied (UNCOMMITTED): apg$apgx / br${vid:-?} removed. Verify, then: netctl commit"
 }
 
-# commit : persist the running nvram (after a verified net-create/net-delete).     [V]
+# apg_bss_list <apg_idx> : live beaconing BSS ifnames of an apg, from the /jffs alloc
+# json (the wl_ifname entries under that apg's sdn_idx). Splitting on '{"sdn_idx"' puts
+# each SDN entry (with all its band wl_ifnames) on one line.                        [V]
+apg_bss_list(){
+	sdnx=$(nvram get sdn_rl | tr '<' '\n' | awk -F'>' -v a="$1" 'NF>1 && $6==a{print $1; exit}')
+	[ -z "$sdnx" ] && return 0
+	f=/jffs/.sys/cfg_mnt/apg_ifnames_used.json; [ -r "$f" ] || return 0
+	sed 's/{"sdn_idx"/\n{"sdn_idx"/g' "$f" | grep "\"sdn_idx\":\"$sdnx\"" \
+		| grep -o '"wl_ifname":"[^"]*"' | sed 's/"wl_ifname":"//; s/"//'
+}
+
+# net-edit <apg> ssid <name> : rename every live BSS of apg<N> with ZERO outage
+# (hostapd set ssid + update_beacon) and persist apg<N>_ssid in nvram. PSK/security
+# edits have no reliable no-outage path while cfg_server owns /tmp/wlX_hapd.conf — use
+# net-delete + net-create (restart_wireless) for those.                            [V]
+cmd_net_edit(){
+	apgx="$1"; field="$2"; val="$3"
+	[ "$(nvram get apg${apgx}_enable)" = "1" ] || die "apg$apgx not enabled"
+	case "$field" in
+	ssid)
+		[ -n "${val:-}" ] || die "net-edit $apgx ssid <name>"
+		nvram set apg${apgx}_ssid="$val"
+		n=0; for b in $(apg_bss_list "$apgx"); do
+			is_protected_if "$b" && continue
+			hostapd_cli -i "$b" set ssid "$val" >/dev/null 2>&1 && hostapd_cli -i "$b" update_beacon >/dev/null 2>&1 && n=$((n+1))
+		done
+		echo "[V] apg$apgx ssid -> $val on $n live BSS (no outage); nvram updated — 'netctl commit' to persist"
+		;;
+	psk)  die "no-outage PSK edit unsupported (cfg_server owns hostapd conf); use net-delete + net-create";;
+	*)    die "net-edit <apg> ssid <name>";;
+	esac
+}
+
+# commit : persist the running nvram (after a verified net-create/net-delete/net-edit). [V]
 cmd_commit(){ nvram commit; echo "nvram committed"; }
 
 usage(){ cat <<EOF
@@ -190,7 +230,8 @@ netctl — GT-BE98 open network manager (reimplements cfg_server/mtlancfg net co
   bridge <bss> <br>            move a WiFi BSS to a VLAN bridge         [safe]
   net-create <apg> <vid> <ssid> <psk> [--apply]   create SDN WiFi VLAN [restart_wireless]
   net-delete <apg> [--apply]   tear down an SDN WiFi VLAN                [restart_wireless]
-  commit                       persist running nvram (after verify)     [restart_wireless]
+  net-edit <apg> ssid <name>   rename all of an apg's BSS, no outage    [safe]
+  commit                       persist running nvram (after verify)     [—]
   deadman [secs] / keep        safety: self-recover reboot / disarm
   snapshot [file]              dump nvram for reversible tests
 Protected (never touched): $PROTECTED_BRIDGES / $PROTECTED_IFACES
@@ -202,7 +243,7 @@ case "$c" in
 	status) cmd_status;; net-list) cmd_net_list;;
 	ssid) cmd_ssid "$@";; hide) cmd_hide "$@";; show) cmd_show "$@";;
 	bss) cmd_bss "$@";; bridge) cmd_bridge "$@";;
-	net-create) cmd_net_create "$@";; net-delete) cmd_net_delete "$@";; commit) cmd_commit;;
+	net-create) cmd_net_create "$@";; net-delete) cmd_net_delete "$@";; net-edit) cmd_net_edit "$@";; commit) cmd_commit;;
 	deadman) cmd_deadman "$@";; keep) cmd_keep;; snapshot) cmd_snapshot "$@";;
 	*) usage;;
 esac
