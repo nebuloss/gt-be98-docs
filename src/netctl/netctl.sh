@@ -70,6 +70,25 @@ cmd_net_list(){
 	done
 }
 
+# vlan-list : per VLAN bridge, classify members as BSS (beaconing) / fronthaul (silent
+# wlX.<vid>) / eth (tagged uplink). Read-only view of the mtlancfg-built fabric. Reminder:
+# bridge membership of a wl BSS is owned by mtlancfg (re-applied at restart_wireless/boot);
+# `netctl bridge` moves are runtime-only. Durable membership = the SDN entry (net-create). [V]
+cmd_vlan_list(){
+	for br in $(brctl show 2>/dev/null | awk '$1 ~ /^br[0-9]/{print $1}'); do
+		is_protected_br "$br" && { echo "$br (admin LAN — protected)"; continue; }
+		vid=${br#br}; bss= fh= eth=
+		for m in $(brctl show "$br" 2>/dev/null | awk -v b="$br" '$1==b{$1=$2=$3=""; print} $1!~/^br/ && NF==1{print}' | tr -s ' '); do
+			case "$m" in
+			eth*) eth="$eth $m";;
+			*.${vid}) fh="$fh $m";;                      # wlX.<vid> = silent front-haul
+			wl*) [ "$(wl -i "$m" isup 2>/dev/null)" = "1" ] && bss="$bss $m" || fh="$fh $m";;
+			esac
+		done
+		printf "  %-6s VID=%-4s BSS:%s | fronthaul:%s | eth:%s\n" "$br" "$vid" "${bss:- -}" "${fh:- -}" "${eth:- -}"
+	done
+}
+
 # ---- ZERO-outage runtime edits (safe; one BSS only) -------------------------
 # existence via netdev/hostapd socket — both survive a `hostapd_cli disable`, unlike
 # `wl bssid` (which errors on a disabled BSS, so it can't be used to gate `bss up`). [V]
@@ -224,6 +243,7 @@ usage(){ cat <<EOF
 netctl — GT-BE98 open network manager (reimplements cfg_server/mtlancfg net config)
   status                       radios + networks + bridges + clients   [safe]
   net-list                     list SDN networks                       [safe]
+  vlan-list                    VLAN bridges + BSS/fronthaul/eth members [safe]
   ssid <bss> <name>            rename a BSS, no outage                  [safe]
   hide|show <bss>              hide/unhide a BSS, no outage             [safe]
   bss <bss> up|down            enable/disable a BSS                     [safe]
@@ -240,7 +260,7 @@ EOF
 
 c="${1:-}"; shift 2>/dev/null || true
 case "$c" in
-	status) cmd_status;; net-list) cmd_net_list;;
+	status) cmd_status;; net-list) cmd_net_list;; vlan-list) cmd_vlan_list;;
 	ssid) cmd_ssid "$@";; hide) cmd_hide "$@";; show) cmd_show "$@";;
 	bss) cmd_bss "$@";; bridge) cmd_bridge "$@";;
 	net-create) cmd_net_create "$@";; net-delete) cmd_net_delete "$@";; net-edit) cmd_net_edit "$@";; commit) cmd_commit;;
