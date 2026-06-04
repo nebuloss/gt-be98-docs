@@ -13,7 +13,7 @@
 Verified context (2026-06-03, live): router in **AP mode** (`sw_mode=3`, `lan_proto=dhcp`,
 LAN IP received from the Ubiquiti gateway). The stock daemons are launched by the monolithic
 `rc`/`services.c` binary (not `/etc/init.d/`) and **respawned by `watchdog.c`**; without an nvram
-gate, only a firmware patch removes them. Full inventory: [comportement.md §12.4](../comportement.md).
+gate, only a firmware patch removes them. Full inventory: [behaviour.md §12.4](../behaviour.md).
 
 ## 1. Target state — allowed processes
 
@@ -96,7 +96,7 @@ Prerequisite: Phase 2 done (cfg_server is no longer countered by mtlancfg/regene
 ### Phase 4 — final lockdown
 - `socat` directly on **:80** (remove the redirect once the Asus `httpd` is removed).
 - Re-block `:8443` (uncomment the `firewall-start` DROP) for defense in depth.
-- Verify the process set = §1 list; freeze; document in `comportement.md`.
+- Verify the process set = §1 list; freeze; document in `behaviour.md`.
 
 ## 4. Risks / to investigate
 - **Debricking**: any firmware patch goes through the A/B dual-slot (a bad flash falls back

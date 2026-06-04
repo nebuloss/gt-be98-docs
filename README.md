@@ -16,7 +16,7 @@ This is the documentation/forensics repo. The code lives elsewhere:
 
 ## Start here
 
-- [comportement.md](comportement.md) — **verified SDN/apg model** (how Asus SDN VLAN
+- [behaviour.md](behaviour.md) — **verified SDN/apg model** (how Asus SDN VLAN
   WiFi actually works: `sdn_rl`/`vlan_rl`/`subnet_rl`/`apg*`, dut_list band masks).
 - [sdn_investigation.md](sdn_investigation.md) — why VLAN bridging can't be owned from
   outside the firmware, and the forensic trail that led to the firmware fixes.
@@ -30,7 +30,7 @@ This is the documentation/forensics repo. The code lives elsewhere:
 
 - [architecture.md](architecture.md) — system overview.
 - [hardware.md](hardware.md) — radio/band map, BSS interfaces, hardware facts.
-- [topologie.md](topologie.md) — network topology.
+- [topology.md](topology.md) — network topology.
 - [nvram_schema.md](nvram_schema.md) — nvram keys used by the SDN/WiFi model.
 - [hostapd_schema.md](hostapd_schema.md) — generated `wlX_hapd.conf` structure.
 - [tools.md](tools.md) — on-device tooling notes.

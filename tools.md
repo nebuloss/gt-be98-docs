@@ -2,7 +2,7 @@
 
 > 📌 For the **live-verified** behavior (interface model, SDN/apg,
 > fast apply commands without `restart_wireless`), see
-> [comportement.md](comportement.md).
+> [behaviour.md](behaviour.md).
 
 ## nvram management
 

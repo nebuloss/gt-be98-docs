@@ -2,7 +2,7 @@
 
 > 📌 The hostapd config **actually generated** by `cfg_server` on the router (keys,
 > `wpa_key_mgmt`, MFP, Wi-Fi 7…) is captured live in
-> [comportement.md](comportement.md) **§12.6**. The "hostapd-direct" approach below
+> [behaviour.md](behaviour.md) **§12.6**. The "hostapd-direct" approach below
 > is historical (superseded by SDN/apg + firmware patch 0025).
 
 ## Key discovery

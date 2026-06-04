@@ -4,11 +4,11 @@
 > auto-created `wlX.VID` alias" model described here does not match the actual
 > behavior observed: VLAN bridging is driven by the **SDN/Guest-Pro (apg)** and the
 > `apg<N>_dut_list` flag, not by `wlX.N_vlan`. Verified reference:
-> [comportement.md](comportement.md) §3 and §5.
+> [behaviour.md](behaviour.md) §3 and §5.
 >
 > 📌 **Live SDN/apg profile captured on the router** (actual `sdn_rl`/`vlan_rl`/
 > `subnet_rl`/`apg<N>_*` format, confirmed `dut_list` band mask):
-> [comportement.md](comportement.md) **§12.2**.
+> [behaviour.md](behaviour.md) **§12.2**.
 
 ## Main radios (wlX)
 
