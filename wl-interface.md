@@ -79,6 +79,28 @@ the durable control verbs stay in netctl (nvram + hostapd_cli). owl is the open,
 auditable **read** path; extending it to the few safe write iovars (e.g. `closed`) is
 straightforward when needed.
 
+## Radio → band map (GT-BE98), from live chanspecs
+
+| iface | band | example chanspec | bandmask bit (webui) | security band code |
+|---|---|---|---|---|
+| `wl3` | 2.4 GHz | `1 (0x1001)` | 1 | 3 |
+| `wl0` | 5 GHz (low)  | `36/80 (0xe02a)` | 4 | 13 |
+| `wl1` | 5 GHz (high) | `108/80 (0xe26a)` | 8 | 16 |
+| `wl2` | 6 GHz | `6g1/160 (0x680f)` | 16 | 96 (sae only) |
+
+`netctl channels` prints this live (chanspec + `wlX_acs_excl_chans`). DFS/ACS exclusions
+live in nvram `wlX_acs_excl_chans` (e.g. wl1 excludes 0xd0a5,0xd8a7,…).
+
+## nvram backend on this build (behnd) — NOT /dev/nvram
+
+The classic Broadcom nvram (`/dev/nvram` + FLSH-header mmap) and the ASUS file variant
+(`/tmp/nvram.txt`) are **both absent** on this 5.04behnd build. `/proc/nvram/*` is only the
+**bootloader/board** nvram (BaseMacAddr, boardid), not the ASUS runtime store. The ASUS
+runtime nvram (sw_mode, apg*, sdn_rl, …) is served by a behnd-specific backend (large
+list values are split into `/jffs/nvram/<key>` files; the main store is daemon/shared-mem
+backed). An open `onvram` reader was therefore **deferred** (tracked in the P2+ task) —
+low payoff since stock `nvram` works and there is no control/security reason to bypass it.
+
 ## RE references
 - `shared/wl_linux.c` — `wl_ioctl()` (the SIOCDEVPRIVATE path).
 - `bcmdrivers/broadcom/net/wl/impl105/main/components/wlioctl/include/wlioctl.h` —

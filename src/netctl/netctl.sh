@@ -79,6 +79,21 @@ cmd_clients(){
 	done
 }
 
+# channels : per-radio current chanspec + ACS exclusion list. Band is derived from the
+# chanspec (6g* = 6 GHz, ch<=14 = 2.4 GHz, else 5 GHz). Radio map on GT-BE98:
+# wl0/wl1 = 5 GHz (low/high segments), wl2 = 6 GHz, wl3 = 2.4 GHz.                 [V]
+cmd_channels(){
+	for r in wl0 wl1 wl2 wl3; do
+		cs=$(wl -i "$r" chanspec 2>/dev/null)
+		n=${cs%% *}; n=${n%%/*}
+		case "$n" in
+			6g*) band=6GHz;;
+			*) if [ "$n" -le 14 ] 2>/dev/null; then band=2.4GHz; else band=5GHz; fi;;
+		esac
+		printf "  %-4s %-6s chanspec=%-18s acs_excl=%s\n" "$r" "$band" "${cs:-?}" "$(nvram get ${r}_acs_excl_chans)"
+	done
+}
+
 # net-list : parse sdn_rl + apg<N> into a network table.                          [V]
 cmd_net_list(){
 	echo "$(nvram get sdn_rl)" | tr '<' '\n' | while IFS='>' read -r idx type en vlanx subx apgx _; do
@@ -265,6 +280,7 @@ netctl — GT-BE98 open network manager (reimplements cfg_server/mtlancfg net co
   net-list                     list SDN networks                       [safe]
   vlan-list                    VLAN bridges + BSS/fronthaul/eth members [safe]
   clients [bss]                associated stations (+rssi/rate)         [safe]
+  channels                     per-radio chanspec + ACS exclusions      [safe]
   ssid <bss> <name>            rename a BSS, no outage                  [safe]
   hide|show <bss>              hide/unhide a BSS, no outage             [safe]
   bss <bss> up|down            enable/disable a BSS                     [safe]
@@ -281,7 +297,7 @@ EOF
 
 c="${1:-}"; shift 2>/dev/null || true
 case "$c" in
-	status) cmd_status;; net-list) cmd_net_list;; vlan-list) cmd_vlan_list;; clients) cmd_clients "$@";;
+	status) cmd_status;; net-list) cmd_net_list;; vlan-list) cmd_vlan_list;; clients) cmd_clients "$@";; channels) cmd_channels;;
 	ssid) cmd_ssid "$@";; hide) cmd_hide "$@";; show) cmd_show "$@";;
 	bss) cmd_bss "$@";; bridge) cmd_bridge "$@";;
 	net-create) cmd_net_create "$@";; net-delete) cmd_net_delete "$@";; net-edit) cmd_net_edit "$@";; commit) cmd_commit;;
