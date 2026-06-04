@@ -1,5 +1,14 @@
 # SDN / mtlancfg Investigation — why the webui cannot own VLAN bridging
 
+> ⛔ **SUPERSEDED IN PART (2026-06-04).** The headline conclusion below ("VLAN/bridge
+> provisioning is impossible from outside the GUI") is **FALSE** — it predated the
+> discovery of **`rc sync_apgx_to_wlunit`**, the open equivalent of the GUI's slot
+> allocator. A full WiFi VLAN can now be created/deleted from nvram + CLI, verified
+> live, fully reversible. See **[netctl-verified.md](netctl-verified.md)**. The §8
+> "persistent damage" came from a *partial* `apply.cgi` payload, not from the proper
+> allocator. The rest of this file (architecture, the BSS-slot vs front-haul
+> distinction, `brctl` bridging) remains accurate and useful.
+
 > Forensic report of a live investigation (2026-06-02) on the
 > GT-BE98. Conclusion: **WiFi→VLAN bridging is locked inside the Asus
 > firmware (`mtlancfg`/SDN) and can be neither replaced nor overridden from the outside.**
