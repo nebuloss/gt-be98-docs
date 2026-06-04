@@ -41,6 +41,22 @@ netctl net-delete 5 --apply ; netctl commit         # clean teardown
 Caveat (verified): a *new* net is allocated a single 2.4 GHz band by
 `rc sync_apgx_to_wlunit`; multi-band on a new CLI-created net is not yet solved.
 
+## owl — open `wl` (read/diagnostic path)
+
+`owl.c` is a dependency-free C reimplementation of the read side of Broadcom's closed
+`wl`, talking to the driver via the raw `SIOCDEVPRIVATE`/`wl_ioctl_t` ABI. Verified
+byte-identical to stock `wl` for `ssid`/`bssid`/`chanspec`/`bss_enabled`/`assoclist`/
+`getvar`. Build (32-bit ARM static, glibc 2.32):
+
+```sh
+CC=.../arm-buildroot-linux-gnueabi-gcc
+$CC -O2 -Wall -static -o owl owl.c
+owl wl3.2 ssid     # -> DEV-SCEP
+owl wl0  chanspec  # -> 0xe02a
+```
+
+See [../../wl-interface.md](../../wl-interface.md) for the full ioctl ABI + command map.
+
 ## Safety guarantees (enforced in code)
 
 - Never operates on `br0`, `eth0-3`, or the primary `wlX.0` BSS (admin/SSH path).
