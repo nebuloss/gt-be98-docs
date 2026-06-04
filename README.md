@@ -47,6 +47,7 @@ This is the documentation/forensics repo. The code lives elsewhere:
   [plans/phase-b-webui-owns-wifi.md](plans/phase-b-webui-owns-wifi.md),
   [plans/phase-b2-sdn-nvram-spec.md](plans/phase-b2-sdn-nvram-spec.md),
   [plans/next-phase-firmware-re.md](plans/next-phase-firmware-re.md) — WiFi-ownership phases.
-- Historical (shell-era): `plans/plan-fix-save-network*.md`,
-  `plans/plan-radius-refactor.md`, `plans/plan-liste-clients-icones.md`,
-  `plans/plan-wpa-enterprise.md`.
+
+> WebUI-app-specific plans (save-network flow, RADIUS, client list, WPA-enterprise)
+> live in the **gt-be98-webui-go** repo (`docs/`), not here. This repo is consumed by
+> that repo as a submodule at `docs/device/`.
