@@ -59,6 +59,26 @@ cmd_status(){
 	done
 }
 
+# clients [bss] : associated stations per BSS. `wl assoclist` gives the MACs (one
+# "assoclist <MAC>" line each); hostapd_cli all_sta adds rssi/rate/connected_time.
+# With no arg, every hostapd-managed BSS (the cfg_server client-report replacement). [V]
+cmd_clients(){
+	list="${1:-$(ls /var/run/hostapd/ 2>/dev/null | grep '\.')}"
+	for i in $list; do
+		ssid=$(wl -i "$i" ssid 2>/dev/null | sed -n 's/.*"\(.*\)".*/\1/p')
+		macs=$(wl -i "$i" assoclist 2>/dev/null | sed -n 's/^assoclist //p')
+		n=$(printf '%s' "$macs" | grep -c . || true)   # || true: grep -c exits 1 on 0
+		printf "%-8s ssid=%-22s clients=%s\n" "$i" "${ssid:-?}" "$n"
+		for m in $macs; do
+			line=$(hostapd_cli -i "$i" sta "$m" 2>/dev/null || true)
+			sig=$(printf '%s\n' "$line" | sed -n 's/^signal=//p' | head -1)
+			rate=$(printf '%s\n' "$line" | sed -n 's/^tx_rate_info=//p' | head -1)
+			ct=$(printf '%s\n' "$line" | sed -n 's/^connected_time=//p' | head -1)
+			printf "    %s  signal=%sdBm tx_rate=[%s] conn=%ss\n" "$m" "${sig:-?}" "${rate:-?}" "${ct:-?}"
+		done
+	done
+}
+
 # net-list : parse sdn_rl + apg<N> into a network table.                          [V]
 cmd_net_list(){
 	echo "$(nvram get sdn_rl)" | tr '<' '\n' | while IFS='>' read -r idx type en vlanx subx apgx _; do
@@ -244,6 +264,7 @@ netctl — GT-BE98 open network manager (reimplements cfg_server/mtlancfg net co
   status                       radios + networks + bridges + clients   [safe]
   net-list                     list SDN networks                       [safe]
   vlan-list                    VLAN bridges + BSS/fronthaul/eth members [safe]
+  clients [bss]                associated stations (+rssi/rate)         [safe]
   ssid <bss> <name>            rename a BSS, no outage                  [safe]
   hide|show <bss>              hide/unhide a BSS, no outage             [safe]
   bss <bss> up|down            enable/disable a BSS                     [safe]
@@ -260,7 +281,7 @@ EOF
 
 c="${1:-}"; shift 2>/dev/null || true
 case "$c" in
-	status) cmd_status;; net-list) cmd_net_list;; vlan-list) cmd_vlan_list;;
+	status) cmd_status;; net-list) cmd_net_list;; vlan-list) cmd_vlan_list;; clients) cmd_clients "$@";;
 	ssid) cmd_ssid "$@";; hide) cmd_hide "$@";; show) cmd_show "$@";;
 	bss) cmd_bss "$@";; bridge) cmd_bridge "$@";;
 	net-create) cmd_net_create "$@";; net-delete) cmd_net_delete "$@";; net-edit) cmd_net_edit "$@";; commit) cmd_commit;;
