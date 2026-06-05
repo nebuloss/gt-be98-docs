@@ -146,3 +146,24 @@ exact artifact as the "minimal-delta" candidate: rebuild clean (NFS off — wipe
 validation (expected result: C goes PASS with only the C1 list + @plt/rodata noise),
 then flash. Alternatively accept the NFS delta consciously (inert by default,
 nfsd_enable=0) and document it in the go/no-go.
+
+## Addendum — checklist C root-cause (orchestrator, 2026-06-05)
+
+The "unexpected" NFS delta is **explained and accepted**, flipping the verdict to
+**FLASH-CANDIDATE PASS (with documented delta)**:
+
+- The Jun-4 **baseline was the anomaly**: its own build log
+  (`logs/build_20260604_103450.log`) shows `NFS=y` in the make flag echo — NFS is part of
+  the GT-BE98 profile (stock ASUS config) — yet the clean-clone first build silently
+  skipped nfs-utils. Commit `700eefe` ("gate nfsd/exportfs verify on RTCONFIG_NFS") was a
+  workaround for exactly that. `[V]`
+- Today's incremental rebuild regenerated `router/.config` (mtime Jun 5 14:31) from the
+  profile, restoring `RTCONFIG_NFS=y`, and nfs-utils built. The patched image is therefore
+  **closer to stock** than the baseline w.r.t. NFS. `[V]`
+- Runtime-inert: `defaults.c` ships `nfsd_enable=0`; `start_nfsd()` early-returns. No
+  service or port is opened by default. `[V]` (validation §C)
+- Note: the comment in `tools/verify-artifact.sh:199` ("config_gt-be98 has RTCONFIG_NFS
+  off by default") is **wrong** — the profile has NFS=y; the real story is the
+  clean-clone-misses-nfs-utils build bug. Worth a future comment fix.
+- All SSH-survival checks (D/E + start_lan/dnsmasq/eapd/hostapd/wlceventd/mcpd/wan/
+  restart_wireless/hotplug_net byte-unchanged) hold regardless. `[V]`
