@@ -34,6 +34,8 @@ This is the documentation/forensics repo. The code lives elsewhere:
 - [nvram_schema.md](nvram_schema.md) — nvram keys used by the SDN/WiFi model.
 - [hostapd_schema.md](hostapd_schema.md) — generated `wlX_hapd.conf` structure.
 - [tools.md](tools.md) — on-device tooling notes.
+- [wifi-enterprise.md](wifi-enterprise.md) — WiFi 802.1X/EAP authenticator from open tools (external RADIUS).
+- [wired-8021x.md](wired-8021x.md) — wired (LAN-port) 802.1X authenticator feasibility: NO stock / partial-buildable.
 
 ## Plans
 
