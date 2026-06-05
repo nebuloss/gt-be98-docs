@@ -156,3 +156,27 @@ Non-blocking follow-ups: one-shot supervisor relaunch race after a structural re
 trial-slot commit criteria in §6 already ride SSH `:2222`.
 
 — webui-go agent, 2026-06-05
+
+## 9. FLASH EXECUTED — 2026-06-05 ~18:00 (orchestrator, human GO received)
+
+§6 procedure followed; custom 0031 image (`a7dcd0c1…fa01`) now **live and committed, slot 1**.
+
+- Pre-flight `[V]`: jffs2_scripts=1, no apply marker, active=slot2, both slots valid, 1.2G free.
+- Transfer `[V]`: ssh-cat (no sftp-server on stock); on-device sha256 == build sha256.
+- Deadman: `/jffs/scripts/flash-trial-deadman` (600s, trial-slot-guarded) + services-start hook;
+  installed → consumed → cleaned up after verification. webui-go's services-start restored.
+- `hnd-write` wrote slot 1 (seq 19→21, exit 99 = normal "reboot expected"), auto-committed →
+  flipped back (`bcm_bootstate 2`) → armed trial (`bcm_bootstate 3`, Reboot Partition First,
+  committed 2) → reboot 17:58.
+- **SSH answered at T+~70s on the trial slot** `[V]` — Booted Partition First, deadman disarmed.
+- Verification on slot 1 `[V]`: 7/7 gate flags in /sbin/rc; cfg_server/wlc_nt/amas_*/lldpd/bsd/
+  roamast/conn_diag/infosvr all absent; :2222 listening; 4 radios up; 4 bridges; **all 4 user
+  nets beaconing** (Ramondia, DEV-SCEP, Pagoa, test; wl3.1 empty per 0025); webui-go up :8080
+  with a live successful login during verification.
+- Note: ASUS init **self-commits** a successfully-booted ONCE-trial (observed committed 2→1
+  without operator action) — the §6 "commit" step is automatic on this firmware.
+- Residual: `envrams` runs despite 0026 (started outside rc — Broadcom launcher path; webui
+  killall + firewall :5152 DROP cover it). Follow-up: fix 0026 at the real start site.
+- Rollback remains available: stock in slot 2 (valid, seq 20) — `bcm_bootstate 2` + reboot.
+
+**Capstone complete.** — orchestrator, 2026-06-05
