@@ -93,10 +93,60 @@ driver, `rc` (WiFi bring-up + slot allocation). Disposition evidence: `plans/sto
 - [x] SSH-survival proven byte-unchanged; dropbearmulti identical; failsafe present
 - [x] Recovery procedure documented; rescue accepts stock image
 - [x] Staged inactive-slot + one-shot-trial plan written (§6)
-- [ ] **webui-go owns WiFi apply + status at runtime** — cfg_server is gated off in this image:
-  the stock GUI apply path + status JSON die with it. **Do not flash before the webui-go agent
-  confirms full ownership on the live AP.** ← the one open gate
+- [x] **webui-go owns WiFi apply + status at runtime** — confirmed live with cfg_server
+  functionally absent, 2026-06-05 → §8
 - [ ] Human decision: flash yes/no, which slot, when (coordinate with the live webui-go agent —
   a reboot destroys its session state)
 
 — orchestrator, 2026-06-05
+
+## 8. webui-go runtime confirmation — 6/6 [V] (live AP, 2026-06-05, webui-go agent)
+
+Method note: on the **stock** firmware cfg_server cannot be kept killed — the watchdog
+churns `notify_rc start_cfgsync` every ~31 s and after ~15 failed cycles rc escalates to a
+**full reboot** (`rc_service: Rebooting...` observed 17:30:45; the start/kill-9 churn also
+broke the br0 mgmt path minutes earlier). All "absent" tests below therefore ran with
+cfg_server **SIGSTOPped** (state `T`, pid alive → watchdog quiet, daemon functionally dead;
+verified frozen across the whole window). This failure mode is stock-only: the gated image
+never starts cfg_server and its watchdog check early-returns.
+
+1. **WiFi apply ownership [V]** — full cycle with cfg_server frozen: create
+   (`save_network` psk2/VID70/wl3 → `wl3.7` + own hostapd + `br70` with `eth0-3.70` trunk,
+   beaconing, `txbcnfrm` climbing) → fast SSID edit (`hostapd_cli`, hostapd pid unchanged,
+   zero outage) → structural PSK+VLAN edit (only `wl3.7` destroyed/recreated into `br30`;
+   the sibling net's hostapd pid/starttime untouched) → delete (vif, hostapd, conf, bridge
+   membership all cleaned). **No rc involvement at all** — the apply path is
+   `wl` + per-BSS hostapd + `brctl` (`internal/wifi`); `sync_apgx`/`restart_wireless`
+   survive only inside the already-executed one-shot SDN→direct migration.
+2. **Status ownership [V]** — status is read from `wl`/`hostapd_cli`/`iw`/`/proc` directly
+   (not netctl, not any cfg_server JSON). With cfg_server dead: `get_radios` = 4 radios
+   correct, `list_networks` = the 4 user nets, `list_clients` cross-checked against
+   `wl assoclist` on all 13 BSSes. Note `/tmp/wlX_hapd.conf` (read for stock-BSS
+   enumeration) is produced by **rc's** hostapd generator, which the image keeps.
+3. **No other gated-daemon dependency [V]** — code audit: zero consumption of
+   wlc_nt/amas_*/lldpd/conn_diag/bsd/roamast sockets/files/events. Only
+   mtlancfg-produced file referenced is `apg_ifnames_used.json` (absent ⇒ graceful
+   `false`, correct post-migration).
+4. **Boot persistence [V]** — everything in `/jffs` (`/jffs/webui/*` +
+   `/jffs/scripts/{services-start,service-event,firewall-start}`). Proven on two
+   unplanned reboots the same day: webui auto-started and `reconcileDirect` rebuilt all
+   nets + portals + captive + builtin RADIUS with zero operator action — including a net
+   created seconds before the reboot. Init assumes no stock service (`killall …
+   2>/dev/null` + nvram sets only). Requirement: the image keeps jffs user-scripts enabled.
+5. **Reboot state safety [V]** — lost by design: in-memory sessions (re-login), in-memory
+   event log, runtime vifs (reconciled at boot, ~90 s). SQLite persists on /jffs; the
+   direct path writes no nvram (channel changes commit immediately). Safe window: whenever
+   `/tmp/webui-applying` is absent and no flash upload is running.
+6. **Clean degradation [V]** — webui at 0.0 % CPU with cfg_server gone; event log shows no
+   retries/polls/spam and no cfg_server reference anywhere in the stack.
+
+§6 step-4 correction from live data: the `test` net is **VID 20** (not VID 40); current
+nets = Ramondia/VID20, Pagoa/VID30, DEV-SCEP/VID50, test/VID20.
+
+Non-blocking follow-ups: one-shot supervisor relaunch race after a structural reapply
+(stale watcher fires once, `ctrl_iface exists`, no loop — cosmetic); stale
+"cfg_server-applies" header comment in `scripts/services-start`. For the trial boot, arm a
+`push.sh`-style deadman: the lab mgmt path is fragile around AP disruptions, and the
+trial-slot commit criteria in §6 already ride SSH `:2222`.
+
+— webui-go agent, 2026-06-05
