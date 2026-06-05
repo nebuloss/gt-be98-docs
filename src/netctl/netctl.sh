@@ -150,10 +150,33 @@ cmd_bridge(){
 
 # ---- structural apply (restart_wireless) — GATED -----------------------------
 # get_cap_mac : the router's own DUT MAC (uppercase) for apg<N>_dut_list.        [V]
+# NB: on a standalone CAP, sync_apgx_to_wlunit/restart_wireless NORMALIZE an explicit
+# CAP MAC to the wildcard "*" (all 3 live user nets converge to <*>...). net-create now
+# uses <*> directly; this helper is kept for callers that want the literal MAC.       [V]
 get_cap_mac(){
 	m=$(nvram get lan_hwaddr); [ -z "$m" ] && m=$(nvram get et0macaddr)
 	[ -z "$m" ] && m=$(nvram get apg3_dut_list | sed 's/^<//; s/>.*//')
 	echo "$m" | tr 'a-f' 'A-F'
+}
+
+# bands_to_mask <spec> : comma list of band tokens -> apg<N>_dut_list band mask.
+# The dut_list field is "<MAC|*>MASK>" where MASK is the OR of the per-radio band_idx
+# bits that sync_apgx_to_wlunit allocates: 1=2.4G(wl3) 4=5G-low(wl0) 8=5G-high(wl1)
+# 16=6G(wl2)  (bit 2 is reserved/unused — no radio). VERIFIED LIVE (t41/t41b 2026-06-05):
+# mask 13 -> wl3.x+wl0.x+wl1.x all beacon; mask 29 -> + wl2.x (6G). Tokens:
+#   2.4|2g  5|5g(both 5G)  5l 5h  6|6g  all(=2.4+5+6)                                  [V]
+bands_to_mask(){
+	m=0; OIFS=$IFS; IFS=,
+	for b in $1; do case "$b" in
+		2.4|2g|24)   m=$((m|1));;
+		5|5g)        m=$((m|4|8));;
+		5l|5g-low)   m=$((m|4));;
+		5h|5g-high)  m=$((m|8));;
+		6|6g)        m=$((m|16));;
+		all)         m=$((m|1|4|8|16));;
+		*) IFS=$OIFS; return 1;;
+	esac; done
+	IFS=$OIFS; [ "$m" -gt 0 ] || return 1; echo "$m"
 }
 
 # net-create <apg_idx> <vid> <ssid> <psk> [--apply] : create an SDN WiFi VLAN via
@@ -164,14 +187,26 @@ get_cap_mac(){
 # always br<VID>. Leaves nvram UNCOMMITTED (reboot reverts) — run `netctl commit` to
 # persist after verifying. VERIFIED LIVE 2026-06-04: apg5/VID40 -> wl3.6 beaconed in
 # br40, then clean-reverted.                                                       [V]
-# Nuance: a NEW net is allocated a SINGLE band (2.4G/wl3) by sync_apgx_to_wlunit even
-# with a multi-band security blob; existing nets keep their band allocation.        [V]
+# MULTI-BAND (SOLVED 2026-06-05): the band count is driven by the apg<N>_dut_list mask,
+# NOT the security blob. --bands selects it (default 2.4,5 = mask 13 = wl3+wl0+wl1, the
+# same 3-band shape as the live user nets). t41/t41b verified mask 13 (3 bands beacon)
+# and mask 29 (+6G/wl2).                                                            [V]
 cmd_net_create(){
-	apgx="$1"; vid="$2"; ssid="$3"; psk="$4"; apply="${5:-dry}"
+	apgx=""; vid=""; ssid=""; psk=""; apply="dry"; bands="2.4,5"
+	while [ $# -gt 0 ]; do case "$1" in
+		--apply)    apply="--apply";;
+		--bands)    bands="$2"; shift;;
+		--bands=*)  bands="${1#--bands=}";;
+		*) if   [ -z "$apgx" ]; then apgx="$1"
+		   elif [ -z "$vid" ];  then vid="$1"
+		   elif [ -z "$ssid" ]; then ssid="$1"
+		   elif [ -z "$psk" ];  then psk="$1"; fi;;
+	esac; shift; done
+	[ -n "$psk" ] || die "usage: net-create <apg> <vid> <ssid> <psk> [--bands 2.4,5,6|all] [--apply]"
+	mask=$(bands_to_mask "$bands") || die "bad --bands '$bands' (tokens: 2.4 5 5l 5h 6 all)"
 	[ "$(nvram get apg${apgx}_enable)" = "1" ] && die "apg$apgx already in use"
 	br="br${vid}"; is_protected_br "$br" && die "refusing protected bridge $br"
 	echo "$(nvram get vlan_rl)" | tr '<' '\n' | awk -F'>' -v v="$vid" '$2==v{exit 3}'; [ $? -eq 3 ] && die "VID $vid already in vlan_rl"
-	mac=$(get_cap_mac)
 	# next sdn/vlan/subnet indices (max+1 over existing rls)
 	sdnx=$(( $(nvram get sdn_rl | tr '<' '\n' | awk -F'>' 'NF>1{print $1}' | sort -n | tail -1) + 1 ))
 	vlanx=$(( $(nvram get vlan_rl | tr '<' '\n' | awk -F'>' 'NF>1{print $1}' | sort -n | tail -1) + 1 ))
@@ -183,9 +218,9 @@ cmd_net_create(){
 	subent="<$subx>$br>${net}.1>255.255.255.0>0>${net}.2>${net}.254>86400>>,>>0>>0>0>>1000>2000>,,>0>1>"
 	sdnent="<$sdnx>Customized>1>$vlanx>$subx>$apgx>0>0>0>0>0>0>0>0>0>0>0>0>0>WEB>0>0>0"
 	cat <<EOF
-net-create plan (apg=$apgx sdn=$sdnx vlan_idx=$vlanx VID=$vid ssid=$ssid bridge=$br gw=${net}.1):
+net-create plan (apg=$apgx sdn=$sdnx vlan_idx=$vlanx VID=$vid ssid=$ssid bridge=$br gw=${net}.1 bands=$bands mask=$mask):
   nvram set apg${apgx}_{enable=1,ssid=$ssid,hide_ssid=0,disabled=0,macmode=disabled}
-  nvram set apg${apgx}_bw_limit='<0>>' apg${apgx}_dut_list='<$mac>1>' apg${apgx}_mlo=''
+  nvram set apg${apgx}_bw_limit='<0>>' apg${apgx}_dut_list='<*>$mask>' apg${apgx}_mlo=''
   nvram set apg${apgx}_security='$sec'
   sdn_rl    += $sdnent
   vlan_rl   += <$vlanx>$vid>0>
@@ -196,14 +231,14 @@ EOF
 	need rc
 	nvram set apg${apgx}_enable=1; nvram set apg${apgx}_ssid="$ssid"; nvram set apg${apgx}_hide_ssid=0
 	nvram set apg${apgx}_disabled=0; nvram set apg${apgx}_macmode=disabled
-	nvram set apg${apgx}_bw_limit='<0>>'; nvram set apg${apgx}_dut_list="<$mac>1>"; nvram set apg${apgx}_mlo=
+	nvram set apg${apgx}_bw_limit='<0>>'; nvram set apg${apgx}_dut_list="<*>$mask>"; nvram set apg${apgx}_mlo=
 	nvram set apg${apgx}_security="$sec"
 	nvram set sdn_rl="$(nvram get sdn_rl)$sdnent"
 	nvram set vlan_rl="$(nvram get vlan_rl)<$vlanx>$vid>0>"
 	nvram set subnet_rl="$(nvram get subnet_rl)$subent"
 	rc sync_apgx_to_wlunit
 	service "restart_wireless;restart_sdn $sdnx"
-	echo "[V] net-create applied (UNCOMMITTED): apg$apgx VID$vid ssid=$ssid -> br$vid"
+	echo "[V] net-create applied (UNCOMMITTED): apg$apgx VID$vid ssid=$ssid bands=$bands(mask $mask) -> br$vid"
 	echo "verify the BSS beacons + SSH survives, then: netctl keep ; netctl commit"
 }
 
@@ -285,7 +320,8 @@ netctl — GT-BE98 open network manager (reimplements cfg_server/mtlancfg net co
   hide|show <bss>              hide/unhide a BSS, no outage             [safe]
   bss <bss> up|down            enable/disable a BSS                     [safe]
   bridge <bss> <br>            move a WiFi BSS to a VLAN bridge         [safe]
-  net-create <apg> <vid> <ssid> <psk> [--apply]   create SDN WiFi VLAN [restart_wireless]
+  net-create <apg> <vid> <ssid> <psk> [--bands 2.4,5,6|all] [--apply]  create SDN WiFi VLAN
+                               (--bands default 2.4,5 = 3 bands; tokens 2.4 5 5l 5h 6 all) [restart_wireless]
   net-delete <apg> [--apply]   tear down an SDN WiFi VLAN                [restart_wireless]
   net-edit <apg> ssid <name>   rename all of an apg's BSS, no outage    [safe]
   commit                       persist running nvram (after verify)     [—]

@@ -21,7 +21,7 @@ Runs **on the router** (`/bin/sh /jffs/netctl.sh <cmd>`). It sets
 | `hide`/`show <bss>` | hide/unhide one BSS, no outage | safe [V] |
 | `bss <bss> up\|down` | enable/disable one BSS (`hostapd_cli disable/enable`) | safe [V] |
 | `bridge <bss> <br>` | move a WiFi BSS to a VLAN bridge (`brctl`) | safe [V] |
-| `net-create <apg> <vid> <ssid> <psk> [--apply]` | create an SDN WiFi VLAN | restart_wireless [V] |
+| `net-create <apg> <vid> <ssid> <psk> [--bands 2.4,5,6\|all] [--apply]` | create an SDN WiFi VLAN (multi-band) | restart_wireless [V] |
 | `net-delete <apg> [--apply]` | tear down an SDN WiFi VLAN | restart_wireless [V] |
 | `net-edit <apg> ssid <name>` | rename all of an apg's BSS, no outage | safe [V] |
 | `commit` | persist running nvram after verifying | — |
@@ -35,11 +35,21 @@ Runs **on the router** (`/bin/sh /jffs/netctl.sh <cmd>`). It sets
 
 ```
 netctl deadman 600                                  # arm self-recovery
-netctl net-create 5 40 MyNet 's3cretpass' --apply   # apg5, VID40 -> br40, BSS beacons
+netctl net-create 5 40 MyNet 's3cretpass' --apply   # apg5, VID40 -> br40, 3 bands beacon
 #   ...verify the SSID beacons and SSH still works...
 netctl keep ; netctl commit                         # disarm + persist
 # later:
 netctl net-delete 5 --apply ; netctl commit         # clean teardown
+```
+
+`--bands` selects the radios the new net beacons on (the band count comes from the
+`apg<N>_dut_list` mask, not the security blob — see ../netctl-verified.md "Band-mask
+encoding"). Tokens: `2.4` `5` (both 5 GHz) `5l` `5h` `6` `all`. Default `2.4,5` (mask 13,
+the same 3-band shape as the stock user nets). Verified live incl. `--bands all` (4 bands,
+6 GHz on `wl2`):
+```
+netctl net-create 5 40 MyNet 's3cretpass' --bands all --apply   # wl3+wl0+wl1+wl2 all beacon
+netctl net-create 5 40 IoT   's3cretpass' --bands 2.4 --apply   # 2.4 GHz only
 ```
 
 Caveat (verified): a *new* net is allocated a single 2.4 GHz band by

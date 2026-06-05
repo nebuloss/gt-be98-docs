@@ -51,13 +51,49 @@ apg_ifnames_used.json += {"sdn_idx":"6","sdn_vid":"40","sdn_band":[{"band_idx":"
 - **Kernel bridge name = `br<VID>`, always.** [V] The `br_ifname` field in `subnet_rl`
   (live values `br54`/`br55`/`br50`) is an opaque internal id, NOT the Linux bridge name.
   VID40 produced `br40` regardless. (`br50`==VID50 is a coincidence.)
-- **A new net is allocated a SINGLE band (2.4G, on wl3) by `sync_apgx_to_wlunit`,** even
-  with a 4-band security blob. [V] Existing multi-band nets (DEV-SCEP, Ramondia) keep
-  their 3-band allocation. Getting multi-band on a *new* net from CLI is still open
-  (the GUI's flow allocates more) — tracked for P0/P2.
+- **Multi-band is driven by the `apg<N>_dut_list` band mask — SOLVED 2026-06-05.** [V]
+  The band count has *nothing* to do with the security blob; it is the `<MAC|*>MASK>`
+  mask field of `apg<N>_dut_list`. The old recipe hardcoded mask `1` (2.4G only), which
+  is why new nets came up single-band. Setting the mask to the OR of the desired radios'
+  band bits makes `sync_apgx_to_wlunit` allocate all of them. See **Band-mask encoding**
+  below; `netctl net-create --bands` now exposes it (default `2.4,5` = mask 13 = 3 bands).
 - **net-delete is the exact inverse and is clean.** [V] Drop the 3 list entries +
   `apg<N>_enable=0` + `rc sync_apgx_to_wlunit` + restart → BSS/bridge gone, and the
   allocation json returns **byte-identical** to before. No GUI, no corruption.
+
+## Band-mask encoding — multi-band new-net allocation (TASK 6a, VERIFIED 2026-06-05)
+
+`apg<N>_dut_list` has the form `<MAC|*>MASK>`. `MASK` is the **OR of the per-radio band
+bits** that `sync_apgx_to_wlunit` allocates into `apg_ifnames_used.json` (the `band_idx`
+field is the *same* bit). Mapped live by `sync`-only probes (allocation-only, **zero
+outage** — no `restart_wireless`), then confirmed beaconing end-to-end:
+
+| mask bit | `band_idx` | radio | band | netctl `--bands` token |
+|---:|---:|---|---|---|
+| 1  | 1  | wl3 | 2.4 GHz   | `2.4` |
+| 2  | —  | (none) | reserved/unused (allocates nothing) | — |
+| 4  | 4  | wl0 | 5 GHz low | `5l` (or `5`) |
+| 8  | 8  | wl1 | 5 GHz high| `5h` (or `5`) |
+| 16 | 16 | wl2 | 6 GHz (SAE)| `6` |
+
+So `MASK = Σ band_idx`. Useful values: **13** = `2.4,5` (= 1+4+8, the same 3-band shape
+as the live user nets), **29** = `all` (= +6G), **16** = 6G-only, **1** = 2.4-only.
+
+Live results [V]:
+- `--bands all` (mask 29) on apg5/VID40 → **all four** beacon in br40 with distinct BSSIDs:
+  `wl3.6` (2.4G) `wl0.3` (5GL) `wl1.3` (5GH) **`wl2.1` (6G)** — 6 GHz works too.
+- `--bands 2.4,5` (mask 13) → `wl3.6 + wl0.3 + wl1.3` (matches DEV-SCEP/Ramondia).
+- Allocation map `band_idx`s equal the mask bits exactly; probing masks 13/29/16/2/31
+  showed bit 2 allocates nothing and 31≡29 (bit 2 ignored).
+- `net-delete` after a 4-band create restored `apg_ifnames_used.json` **byte-identical**
+  (md5 match) — the inverse is clean for multi-band too.
+- **CAP-MAC normalization:** `sync`/`restart_wireless` rewrite an explicit CAP MAC in
+  `dut_list` to the wildcard `*` (all three live user nets sit at `<*>...>`). `net-create`
+  now writes `<*>MASK>` directly. [V]
+
+The full 4-band security blob (`<3>..<13>..<16>..<96>sae..`) is written regardless of the
+selected bands; extra per-band security entries with no allocated radio are harmless [V].
+6 GHz mandates SAE — the `<96>sae>` entry covers it.
 
 ## Reversibility (how the live tests stayed safe)
 
