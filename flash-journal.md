@@ -268,3 +268,42 @@ hardware.** Total flash session: 3 flashes, 4 reboots. Outage windows ≈
 **M3 COMPLETE — the mutation pipeline is proven: we can change rootfs
 content safely and every image self-identifies.** Device left committed on
 br-0032, dead-man infrastructure now baked into the running image.
+
+---
+
+## 2026-06-06 01:05 — FLASH #5 (M4 batch 1): br-0033 → slot 2 — **INCIDENT: trial hung pre-network, device dark**
+
+- Image: br-0033 `8f0b70a1…66c4` = br-0032 + 22 removals (telemetry/cloud,
+  AiMesh/cfg symlinks, bsd/roamast, wsdd2/uamsrv) + envrams wrapper-gate
+  (rename to envrams.real). Diff proof exact (12 files + 10 symlinks
+  removed, 4 added, 1 changed, zero unintended).
+- Flash sequence nominal; ONCE boot into slot 2 at 01:07. **No SSH, no ping
+  ever.** Dead-man never fired ⇒ rc hung BEFORE /jffs mounted (the armed
+  flag lives on /jffs — design flaw, see lessons). Kernel did not panic-reset
+  (no auto-return), so userspace is wedged with the kernel feeding the HW
+  watchdog. Production outage from 01:07 (user nets presumed down).
+- Safety state at hang: **committed=1 = br-0032 (good)**, ONCE consumed.
+  ANY reset/power-cycle boots the good slot — the metadata invariants held;
+  the gap is that nothing can *trigger* the reset remotely.
+- Static re-analysis of every batch-1 removal found no pre-network exec
+  path (amas_* starts are re_mode==1-gated; cfg_server/wlc_nt/bsd/roamast
+  starters nvram-gated; envrams only mfg/httpd; hndmfg.sh is mfg-mode-only).
+  Root cause NOT yet identified — do not retry until understood.
+
+**Lessons (to implement before the next trial):**
+1. Dead-man flag/log must move to **/data** (mounted by the boot rail at
+   S25mount-fs, before rc) — never depend on rc-mounted /jffs.
+2. The in-image dead-man launcher (S26) must not silently give up: if its
+   flag store is unavailable it should still countdown using a conservative
+   default and reboot-to-committed.
+3. Add a rail breadcrumb logger (boot-stage markers to /data) so a hung
+   boot leaves forensic evidence for the next session.
+4. Batch size was too big (22 removals in one trial) — violates
+   one-variable-per-trial; future strips go in smaller slices (≤5, grouped
+   by subsystem), each with its own trial.
+
+**Recovery plan:** probe SSH continuously ≥2 h (§3.8). On return:
+slot 1 (power-event/self-recovery) → neutralize slot 2 with br-0032
+artifact, gate, then offline root-cause; slot 2 (late recovery) → diagnose
+live, then `bcm_bootstate +1` + reboot + neutralize. No further flashes
+until the cause is understood.
