@@ -15,6 +15,7 @@ Runs **on the router** (`/bin/sh /jffs/netctl.sh <cmd>`). It sets
 | `status` | radios + SDN networks + bridges + clients | safe [V] |
 | `net-list` | list SDN networks from `sdn_rl`+`apg<N>` | safe [V] |
 | `vlan-list` | VLAN bridges + BSS/fronthaul/eth members | safe [V] |
+| `status-json [which] [out]` | emit cfg_server-shape JSON (`aplist`/`clientlist`/`wiredclientlist`/`allwclientlist`/`all`) | safe [V] |
 | `clients [bss]` | associated stations (+signal/rate via hostapd_cli) | safe [V] |
 | `events [bss...] [--secs N]` | live client join/leave event stream | safe [V] |
 | `channels` | per-radio chanspec + ACS exclusions | safe [V] |
@@ -25,6 +26,8 @@ Runs **on the router** (`/bin/sh /jffs/netctl.sh <cmd>`). It sets
 | `hide`/`show <bss>` | hide/unhide one BSS, no outage | safe [V] |
 | `bss <bss> up\|down` | enable/disable one BSS (`hostapd_cli disable/enable`) | safe [V] |
 | `bridge <bss> <br>` | move a WiFi BSS to a VLAN bridge (`brctl`) | safe [V] |
+| `steer <src> <sta> <target> [oc ch] [--kick]` | 802.11v BTM: nudge a STA to another BSS/band | safe [V] |
+| `steer-neighbors <bss>` | show the BTM neighbor DB for a BSS | safe [V] |
 | `bss-create <radio> <ssid> [br]` | create+up an OPEN BSS **directly** (`wl interface_create ap`) — no rc/wlconf | direct [V] |
 | `bss-destroy <wlX.Y>` | tear down a bss-create'd BSS (`wl interface_remove`); refuses SDN nets | direct [V] |
 | `net-create <apg> <vid> <ssid> <psk> [--bands 2.4,5,6\|all] [--apply]` | create an SDN WiFi VLAN (multi-band) | restart_wireless [V] |

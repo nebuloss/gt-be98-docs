@@ -224,6 +224,108 @@ cmd_vlan_list(){
 	done
 }
 
+# ---- status-JSON publisher — open replacement for cfg_server's /tmp/*.json ----
+# Reproduces /tmp/{aplist,clientlist,wiredclientlist,allwclientlist}.json from wl /
+# hostapd_cli / brctl / /proc/net/arp, so webui can drop the cfg_server dependency
+# (patch-0028). Verified shape-compatible against the live cfg_server JSON (status-json.md).
+# A "wired client" = an fdb entry (`brctl showmacs`) on an ETHERNET bridge port; the port is
+# mapped to its iface via /sys/class/net/<br>/brif/<if>/port_no. IP from /proc/net/arp;
+# sdn_idx from the bridge's VID -> vlan_rl -> sdn_rl. Wireless clients from `wl assoclist`,
+# band from the radio (wl3=2G wl0=5G wl1=5G1 wl2=6G).                                     [V]
+sj_cap(){ nvram get lan_hwaddr | tr 'a-f' 'A-F'; }
+sj_band_of(){ case "${1%%.*}" in wl3) echo 2G;; wl0) echo 5G;; wl1) echo 5G1;; wl2) echo 6G;; *) echo 2G;; esac; }
+
+# collect wired clients across all bridges -> lines "MAC|IP|SDN_IDX"
+sj_collect_wired(){
+	for br in $(brctl show 2>/dev/null | awk '$1 ~ /^br[0-9]/{print $1}'); do
+		vid=${br#br}; sdn=""
+		if [ "$br" != br0 ]; then
+			vlanx=$(nvram get vlan_rl | tr '<' '\n' | awk -F'>' -v v="$vid" '$2==v{print $1; exit}')
+			[ -n "$vlanx" ] && sdn=$(nvram get sdn_rl | tr '<' '\n' | awk -F'>' -v vx="$vlanx" 'NF>1 && $4==vx{print $1; exit}')
+		fi
+		# port(decimal) -> iface map from sysfs (port_no is hex, e.g. 0x2)
+		pm=""
+		for ifp in /sys/class/net/"$br"/brif/*; do
+			[ -e "$ifp/port_no" ] || continue
+			ifn=$(basename "$ifp"); pn=$(cat "$ifp/port_no" 2>/dev/null); dp=$((pn))
+			pm="$pm $dp:$ifn"
+		done
+		brctl showmacs "$br" 2>/dev/null | awk '$3=="no"{print $1, $2}' | while read -r port mac; do
+			ifn=""; for kv in $pm; do [ "${kv%%:*}" = "$port" ] && { ifn="${kv#*:}"; break; }; done
+			case "$ifn" in eth*) ;; *) continue;; esac          # ethernet port => wired client
+			um=$(echo "$mac" | tr 'a-f' 'A-F')
+			ip=$(awk -v m="$mac" 'tolower($4)==m{print $1; exit}' /proc/net/arp 2>/dev/null)
+			echo "$um|$ip|$sdn"
+		done
+	done
+}
+# dedupe wired clients by MAC (a client on the tagged eth trunk shows in br0 AND its VLAN
+# bridge): keep first-seen order, upgrade to a non-empty IP / VLAN sdn_idx when seen.   [V]
+sj_wired_dedup(){
+	sj_collect_wired | awk -F'|' '
+		{ if(!($1 in seen)){order[++n]=$1; seen[$1]=1}
+		  if($2!="")ip[$1]=$2; if($3!="")sdn[$1]=$3 }
+		END{ for(i=1;i<=n;i++){m=order[i]; printf "%s|%s|%s\n", m, ip[m], sdn[m]} }'
+}
+# collect wireless clients -> lines "MAC|BAND|RSSI|BSS"
+sj_collect_wireless(){
+	for i in $(ls /var/run/hostapd/ 2>/dev/null | grep '\.'); do
+		band=$(sj_band_of "$i")
+		for m in $(wl -i "$i" assoclist 2>/dev/null | sed -n 's/^assoclist //p'); do
+			rssi=$(wl -i "$i" rssi "$m" 2>/dev/null | grep -o '\-\?[0-9]*' | head -1)
+			echo "$(echo "$m" | tr 'a-f' 'A-F')|$band|${rssi:-0}|$i"
+		done
+	done
+}
+sj_aplist(){
+	printf '{"0":{"ap2g":"%s","ap5g":"%s","ap5g1":"%s","ap6g":"%s","ap6g1":"","apdwb":""}}\n' \
+		"$(wl -i wl3 status 2>/dev/null | sed -n 's/.*MLD Address: //p' | tr 'a-f' 'A-F')" \
+		"$(wl -i wl0 status 2>/dev/null | sed -n 's/.*MLD Address: //p' | tr 'a-f' 'A-F')" \
+		"$(wl -i wl1 status 2>/dev/null | sed -n 's/.*MLD Address: //p' | tr 'a-f' 'A-F')" \
+		"$(wl -i wl2 status 2>/dev/null | sed -n 's/.*MLD Address: //p' | tr 'a-f' 'A-F')"
+}
+sj_clientlist(){
+	cap=$(sj_cap)
+	{ printf '{"%s":{"wired_mac":{' "$cap"
+	  sj_wired_dedup | awk -F'|' '{if(n++)printf",";printf"\"%s\":{\"ip\":\"%s\"}",$1,$2}'
+	  printf '}'
+	  # wireless clients grouped by band key (only present when associated)
+	  sj_collect_wireless | sort -u | awk -F'|' '
+	    {b[$2]=b[$2] (c[$2]++?",":"") sprintf("\"%s\":{\"rssi\":%s}",$1,$3)}
+	    END{for(k in b)printf",\"%s\":{%s}",k,b[k]}'
+	  printf '}}\n'; }
+}
+sj_wiredclientlist(){
+	cap=$(sj_cap); ts=$(date +%s 2>/dev/null || cut -d. -f1 /proc/uptime)
+	{ printf '{"%s":{' "$cap"
+	  sj_wired_dedup | awk -F'|' -v ts="$ts" '
+	    {if(n++)printf",";printf"\"%s\":{\"ts\":%s",$1,ts; if($3!="")printf",\"sdn_idx\":%s",$3; printf"}"}'
+	  printf '}}\n'; }
+}
+sj_allwclientlist(){
+	cap=$(sj_cap); w=$(sj_collect_wireless | sort -u)
+	[ -z "$w" ] && { echo '{}'; return; }
+	{ printf '{"%s":{' "$cap"
+	  printf '%s\n' "$w" | awk -F'|' '{if(n++)printf",";printf"\"%s\":{\"band\":\"%s\",\"rssi\":%s}",$1,$2,$3}'
+	  printf '}}\n'; }
+}
+# status-json [aplist|clientlist|wiredclientlist|allwclientlist|all] [outfile]
+cmd_status_json(){
+	which="${1:-all}"; out="${2:-}"
+	gen(){ case "$1" in
+		aplist) sj_aplist;; clientlist) sj_clientlist;;
+		wiredclientlist) sj_wiredclientlist;; allwclientlist) sj_allwclientlist;;
+		*) die "status-json [aplist|clientlist|wiredclientlist|allwclientlist|all] [outfile]";;
+	esac; }
+	if [ "$which" = all ]; then
+		for f in aplist clientlist wiredclientlist allwclientlist; do
+			if [ -n "$out" ]; then gen "$f" > "$out/$f.json"; echo "wrote $out/$f.json"; else printf '%s.json: ' "$f"; gen "$f"; fi
+		done
+	else
+		if [ -n "$out" ]; then gen "$which" > "$out"; echo "wrote $out"; else gen "$which"; fi
+	fi
+}
+
 # ---- ZERO-outage runtime edits (safe; one BSS only) -------------------------
 # existence via netdev/hostapd socket — both survive a `hostapd_cli disable`, unlike
 # `wl bssid` (which errors on a disabled BSS, so it can't be used to gate `bss up`). [V]
@@ -514,6 +616,8 @@ netctl — GT-BE98 open network manager (reimplements cfg_server/mtlancfg net co
   status                       radios + networks + bridges + clients   [safe]
   net-list                     list SDN networks                       [safe]
   vlan-list                    VLAN bridges + BSS/fronthaul/eth members [safe]
+  status-json [which] [out]    emit cfg_server-shape JSON (aplist/clientlist/
+                               wiredclientlist/allwclientlist/all)       [safe]
   clients [bss]                associated stations (+rssi/rate)         [safe]
   events [bss...] [--secs N]   live client join/leave event stream      [safe]
   channels                     per-radio chanspec + ACS exclusions      [safe]
@@ -543,6 +647,7 @@ c="${1:-}"; shift 2>/dev/null || true
 case "$c" in
 	status) cmd_status;; net-list) cmd_net_list;; vlan-list) cmd_vlan_list;; clients) cmd_clients "$@";; events) cmd_events "$@";; channels) cmd_channels;;
 	scan) cmd_scan "$@";; chanspec) cmd_chanspec "$@";;
+	status-json) cmd_status_json "$@";;
 	ssid) cmd_ssid "$@";; hide) cmd_hide "$@";; show) cmd_show "$@";;
 	bss) cmd_bss "$@";; bridge) cmd_bridge "$@";;
 	steer) cmd_steer "$@";; steer-neighbors) cmd_steer_neighbors "$@";;
