@@ -184,31 +184,52 @@ a real client (`wl -i <bss> deauthenticate <mac>`): the round-trip produced
   reliably. [V]
 - daemons are grep-killed by the unique action-script path on exit / Ctrl-C (trap). [V]
 
-## Channel control — `netctl chanspec set|auto` (TASK 6b.2, VERIFIED 2026-06-05)
+## Channel control — `netctl chanspec set|auto` (TASK 6b.2; CSA path VERIFIED 2026-06-05)
 
 Channel is **per-radio**, not per-BSS (all four radios — wl3/2.4G, wl0+wl1/5G, wl2/6G —
-carry the main network plus any SDN BSSes), so there is no "disposable radio." Mechanism
-findings:
-- A direct `wl -i <radio> chanspec <spec>` is **INEFFECTIVE on an AP radio**: the driver
-  prints "Chanspec set to 0x…" but the BSS config immediately re-asserts the old channel
-  (same override pattern as `wl ssid`/`wl bss` on a hostapd-managed BSS). [V]
+carry the main network plus any SDN BSSes), so there is no "disposable radio." But the
+move itself is now **ZERO-outage** via the driver's own CSA. Mechanism findings:
+
+- **LIGHTEST VIABLE PATH = driver-level CSA: `wl -i <radio> csa <mode> <count> <spec>`.** [V]
+  This is an 802.11h channel-switch-announcement issued by the **closed `wl` driver itself**,
+  bypassing hostapd. On an UP AP radio it moves the PHY channel **live with no outage**:
+  every BSS on the radio stays `isup=1` and beacons never stop (per-BSS `txbcnfrm` keeps
+  incrementing — no reset, no gap). It is **single-radio and instant — NOT an all-radio
+  blip.** `mode`=0 (data allowed during the countdown) / 1 (after radar); `count` = beacons
+  before the switch (~5 ≈ 0.5 s); `<spec>` is the full wl chanspec (csa infers the band
+  from the channel number or `6g` prefix, so the verbatim netctl spec works).
+  Verified live on **wl2/6G**: `6g1/160 → 6g33/160 → 6g5/80 → 6g1/160`, each `rc=0`, BSS
+  `isup=1` throughout, `txbcnfrm` climbing continuously across every move (handles a
+  **bandwidth change** too). Channel is per-radio PHY, so **all the radio's BSSes follow**
+  the move automatically. Clients receiving the CSA IE retune without disassociating [P]
+  (standard CSA semantics; the on-box `wpa_supplicant` can't drive an OTA STA to prove it —
+  see webui-direct-wifi.md "On-box client testing"). CSA is **runtime-only** (nvram is
+  untouched → a reboot reverts), so netctl also writes `wlX_chanspec` (uncommitted) and
+  `netctl commit` persists the new channel across a reboot.
+- **`hostapd_cli -i <bss> chan_switch` (the hostapd CSA verb) is NON-VIABLE on this build.** [V]
+  (webui-go agent, verified 2026-06-05.) Use the **driver** `wl csa` above, not hostapd's.
+- A direct `wl -i <radio> chanspec <spec>` (no CSA) is **INEFFECTIVE on an AP radio**: the
+  driver prints "Chanspec set to 0x…" but the BSS config immediately re-asserts the old
+  channel (same override pattern as `wl ssid`/`wl bss` on a hostapd-managed BSS). [V]
 - There is **no `acsd`/`chanim` daemon** running and `wl autochannel` is *Unsupported* on
   this driver — ACS runs once at `wlconf` init. [V]
-- The effective, durable path is **nvram `wlX_chanspec` + a re-init**. Stock fw has no
-  per-radio restart, so apply = `restart_wireless` (a brief all-radio blip). `wlX_chanspec=0`
-  = ACS/auto; a literal spec (`6`, `36/80`, `100/160`, `6g37/160`) = fixed. [V]
 
-Live result [V]: `chanspec set wl2 6g33/160 --apply` moved wl2 from `6g1/160` → `6g33/160`;
-`chanspec auto wl2 --apply` returned it to ACS (`6g1/160`). Crucially, `restart_wireless`
-**rebuilt every existing SDN BSS and re-added it to its bridge automatically** (wl3.2/wl0.1/
+**netctl wiring (TASK chanspec-CSA, VERIFIED 2026-06-05):**
+- `chanspec set <radio> <spec> [--apply]` → **driver CSA by default (zero outage)**; also
+  sets `wlX_chanspec` nvram (uncommitted). Live-verified end-to-end through the tool on
+  wl2: dry-run shows "apply = driver CSA (ZERO outage)", `--apply` moved `6g1/160 → 6g33/160`
+  with `wl2.1` `isup=1` and `txbcnfrm` 547826→547855 unbroken; reverted cleanly. [V]
+- `chanspec set <radio> <spec> --apply --restart` → **heavy fallback**: `wlX_chanspec`
+  nvram + `restart_wireless` (brief ALL-radio blip). Use if a target channel rejects CSA.
+- `chanspec auto <radio> [--apply]` → ACS has **no CSA form** (ACS is chosen once at wlconf
+  init), so it forces the `restart_wireless` path: `wlX_chanspec=0` + re-init. [V]
+
+Heavy-path note [V]: when `restart_wireless` IS used (auto/ACS or `--restart`), it
+**rebuilds every existing SDN BSS and re-adds it to its bridge automatically** (wl3.2/wl0.1/
 wl1.1→br50, wl3.3→br30, wl3.5/wl0.2/wl1.2→br20 all `isup=1`) — no `restart_sdn` needed for
 *existing* nets (unlike a *new* net, which still needs it to build a fresh bridge).
-
-No-outage alternative (NOT yet live-verified, [P]): `hostapd_cli -i <bss> chan_switch
-<count> <freq> [center_freq1= bandwidth= sec_channel_offset=]` does a CSA so associated
-clients follow without a drop. Left unverified because the 6G/160 MHz center-freq math is
-error-prone to validate on the live main network; the nvram+restart path above is the
-robust, verified one. 6 GHz freq = 5950 + 5·channel MHz (6g1 = 5955).
+`wlX_chanspec=0` = ACS/auto; a literal spec (`6`, `36/80`, `100/160`, `6g37/160`) = fixed.
+6 GHz freq = 5950 + 5·channel MHz (6g1 = 5955).
 
 **owl-native scan deferred (honest scope note):** `WLC_SCAN`/`WLC_SCAN_RESULTS` return a
 **version-stamped, large `wl_bss_info_t`** whose field offsets vary by driver build —

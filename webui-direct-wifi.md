@@ -171,6 +171,45 @@ status:  wl assoclist / hostapd_cli all_sta / wl scanresults  (netctl clients/sc
 ioctl; reads reimplementable in Go like `owl`) and **hostapd** (open upstream + vendor
 patches, launched directly). Both are direct, not orchestrators.
 
+## Channel control — change ONE radio's channel with ZERO outage (driver CSA) [V]
+
+> **VERIFIED LIVE 2026-06-05** on wl2/6G. Changing a radio's operating channel does **not**
+> require `restart_wireless` (the all-radio blip) and does **not** drop the BSSes.
+
+Channel is a **radio/PHY** property (per-radio, not per-BSS), so all the BSSes on a radio
+share it. The lightest viable runtime move is the **driver's own CSA iovar** — `wl csa`,
+**not** `hostapd_cli chan_switch`:
+
+```
+wl -i <radio> csa <mode> <count> <chanspec>
+#   mode:  0 = data allowed during the countdown (normal) ; 1 = after radar
+#   count: beacons before the switch (~5 ≈ 0.5 s)
+#   chanspec: full wl spec — csa infers the band from the channel# / `6g` prefix
+wl -i wl2 csa 0 5 6g33/160            # 6 GHz: move to 6g33/160  (rc=0)
+wl -i wl2 csa 0 5 6g5/80             # also changes BANDWIDTH (160 -> 80) live
+```
+
+Verified outage profile on wl2/6G (`6g1/160 → 6g33/160 → 6g5/80 → back`): every BSS on the
+radio stays `isup=1` and **beacons never stop** — `wl -i <bss> counters | grep txbcnfrm`
+climbed continuously across every move (no reset, no gap). **Single-radio, instant, no
+all-radio blip.** All BSSes on the radio follow the new channel automatically (it's the
+shared PHY). Associated clients that parse the CSA IE retune **without disassociating** [P]
+(standard 802.11h CSA — the on-box `wpa_supplicant v0.6.10` can't drive an OTA STA to prove
+the client side, see "On-box client testing is NOT possible" above; the verified facts are
+the channel move + uninterrupted beaconing).
+
+**Do NOT use `hostapd_cli -i <bss> chan_switch …`** — the hostapd CSA verb is **NON-VIABLE
+on this build** (verified 2026-06-05). Use the **driver** `wl csa`.
+
+CSA is **runtime-only**: it does not touch `wlX_chanspec` nvram, so a reboot reverts the
+channel. For persistence, also `nvram set wlX_chanspec=<spec>` and commit (a cold boot then
+brings the radio up on that channel). A bare `wl -i <radio> chanspec <spec>` (no CSA) is
+**inert on an UP AP radio** — the BSS re-asserts the old channel.
+
+netctl wraps this as **`netctl chanspec set <radio> <spec> --apply`** (driver CSA, zero
+outage, default) with **`--restart`** as the heavy `restart_wireless` fallback and
+**`chanspec auto <radio>`** for ACS (which has no CSA form → it re-inits via restart).
+
 ## nvram = persistence only
 
 At runtime webui owns everything above. nvram matters only so the config **survives a

@@ -121,33 +121,63 @@ cmd_scan(){
 	printf '%s\n' "$out" | awk '{print $3}' | sort | uniq -c | sort -rn | awk '{printf "   ch %-12s %s\n", $2, $1}'
 }
 
-# chanspec set <radio> <spec> [--apply] : set a FIXED operating channel on one radio.
-# chanspec auto <radio> [--apply]        : set the radio to ACS (auto, nvram chanspec=0).
-# Mechanism (RE 2026-06-05): a direct `wl chanspec` is INEFFECTIVE on an AP radio (the
-# driver accepts it but the BSS config re-asserts the old channel — same pattern as
-# `wl ssid`/`wl bss`). The effective, durable path is nvram `wlX_chanspec` re-read by an
-# init: there is NO per-radio restart on stock fw (see netctl-verified.md), so apply =
-# `restart_wireless` — a brief ALL-radio blip. Leaves nvram UNCOMMITTED (reboot reverts);
-# run `netctl commit` to persist. <spec> uses wl syntax: 2.4G `6`/`1`; 5G `36/80`,`100/160`;
-# 6G `6g37/160`. There is no acsd daemon; ACS runs once at wlconf init.                [V]
+# chanspec set <radio> <spec> [--apply] [--restart] : change ONE radio's operating channel.
+# chanspec auto <radio> [--apply]                    : set the radio to ACS (auto, nvram=0).
+# Mechanism (RE 2026-06-05; driver-CSA verified live 2026-06-05):
+#  - DEFAULT apply = driver-level CSA: `wl -i <radio> csa 0 <count> <spec>`. This is an
+#    802.11h channel-switch-announcement issued by the closed `wl` driver itself — NOT
+#    `hostapd_cli chan_switch`, which is NON-VIABLE on this build [V]. It moves the radio's
+#    PHY channel LIVE with ZERO outage: every BSS on the radio stays isup=1 and beacons
+#    never stop (txbcnfrm keeps incrementing — no reset, no gap). Single-radio, instant,
+#    NO all-radio blip. Verified on wl2/6G: 6g1/160 -> 6g33/160 -> 6g5/80 -> back, BSS up
+#    throughout (channel is per-radio PHY, so all the radio's BSSes follow the move).  [V]
+#  - A bare `wl -i <radio> chanspec <spec>` is INEFFECTIVE on an UP AP radio (the BSS config
+#    re-asserts the old channel — same override as `wl ssid`/`wl bss`).                 [V]
+#  - CSA is runtime-only (nvram untouched -> reboot reverts); we also set nvram
+#    `wlX_chanspec` so `netctl commit` persists the new channel across a reboot.
+#  - --restart forces the HEAVY fallback: nvram + `restart_wireless` (a brief ALL-radio
+#    blip; SSH is on ethernet). Used automatically for `auto`/ACS (no CSA equivalent — ACS
+#    is chosen once at wlconf init, there is no acsd daemon), and available if some target
+#    channel rejects CSA. <spec> = wl syntax: 2.4G `6`/`1`; 5G `36/80`,`100/160`; 6G
+#    `6g37/160` (csa infers the band from the channel number / `6g` prefix).            [V]
+CSA_COUNT=5                                     # beacons announced before the switch (~0.5s)
 cmd_chanspec(){
 	sub="${1:-}"; r="${2:-}"
 	case "$sub" in
 		set|auto) ;;
-		*) die "usage: chanspec set <radio> <spec> [--apply] | chanspec auto <radio> [--apply]";;
+		*) die "usage: chanspec set <radio> <spec> [--apply] [--restart] | chanspec auto <radio> [--apply]";;
 	esac
 	echo "$r" | grep -qE '^wl[0-3]$' || die "radio must be wl0|wl1|wl2|wl3 (wl3=2.4G wl0/wl1=5G wl2=6G)"
-	if [ "$sub" = set ]; then spec="${3:-}"; apply="${4:-dry}"; [ -n "$spec" ] || die "usage: chanspec set <radio> <spec> [--apply]"
-	else spec=0; apply="${3:-dry}"; fi
+	restart=""
+	if [ "$sub" = set ]; then
+		spec="${3:-}"; [ -n "$spec" ] || die "usage: chanspec set <radio> <spec> [--apply] [--restart]"
+		shift 3
+	else
+		spec=0; shift 2
+	fi
+	apply="dry"
+	for a in "$@"; do case "$a" in --apply) apply="--apply";; --restart) restart=1;; esac; done
+	[ "$sub" = auto ] && restart=1             # ACS has no CSA form -> must re-init
 	cur=$(wl -i "$r" chanspec 2>/dev/null)
 	tgt=$([ "$sub" = auto ] && echo "auto/ACS (0)" || echo "$spec")
 	echo "chanspec $sub $r: now '$cur' (nvram ${r}_chanspec=$(nvram get ${r}_chanspec)) -> $tgt"
-	echo "  apply = restart_wireless (brief ALL-radio blip; SSH on ethernet is unaffected)"
-	[ "$apply" = "--apply" ] || { echo "(dry-run; pass --apply to execute — arm 'netctl deadman' first)"; return 0; }
-	need rc
-	nvram set ${r}_chanspec="$spec"
-	service restart_wireless
-	echo "[*] applied (UNCOMMITTED): ${r}_chanspec=$spec — verify with 'netctl channels', then 'netctl commit'"
+	if [ -n "$restart" ]; then
+		echo "  apply = restart_wireless (brief ALL-radio blip; SSH on ethernet is unaffected)"
+	else
+		echo "  apply = driver CSA (ZERO outage, single-radio, instant)"
+	fi
+	[ "$apply" = "--apply" ] || { echo "(dry-run; pass --apply to execute$([ -n "$restart" ] && echo " — arm 'netctl deadman' first"))"; return 0; }
+	if [ -n "$restart" ]; then
+		need rc
+		nvram set ${r}_chanspec="$spec"
+		service restart_wireless
+		echo "[*] applied via restart_wireless (UNCOMMITTED): ${r}_chanspec=$spec — verify 'netctl channels', then 'netctl commit'"
+	else
+		wl -i "$r" csa 0 "$CSA_COUNT" "$spec" || die "csa rejected '$spec' on $r — retry with --restart (heavy fallback)"
+		nvram set ${r}_chanspec="$spec"
+		sleep 1
+		echo "[*] applied via CSA (no outage): $r now '$(wl -i "$r" chanspec)' (UNCOMMITTED nvram ${r}_chanspec=$spec) — 'netctl commit' to persist"
+	fi
 }
 
 # events [bss...] [--secs N] : live stream of client join/leave events on the managed
@@ -622,7 +652,7 @@ netctl — GT-BE98 open network manager (reimplements cfg_server/mtlancfg net co
   events [bss...] [--secs N]   live client join/leave event stream      [safe]
   channels                     per-radio chanspec + ACS exclusions      [safe]
   scan <radio>                 site survey on one radio (neighbors+chans)[brief blip]
-  chanspec set <radio> <spec> [--apply]   fix a radio's channel        [restart_wireless]
+  chanspec set <radio> <spec> [--apply] [--restart]  fix a radio's channel  [CSA: no outage]
   chanspec auto <radio> [--apply]         set a radio to ACS/auto       [restart_wireless]
   steer <src> <sta> <target> [oc ch] [--kick]  802.11v BTM: nudge a STA to another BSS/band
   steer-neighbors <bss>        show the BTM neighbor DB for a BSS        [safe]
