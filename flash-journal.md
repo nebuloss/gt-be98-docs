@@ -307,3 +307,35 @@ slot 1 (power-event/self-recovery) → neutralize slot 2 with br-0032
 artifact, gate, then offline root-cause; slot 2 (late recovery) → diagnose
 live, then `bcm_bootstate +1` + reboot + neutralize. No further flashes
 until the cause is understood.
+
+### INCIDENT CLOSURE (2026-06-06 ~03:20 device time) — device did not return within 2 h
+
+Probed every ≤60 s for 2 h+ after the 01:07 hang: no SSH, no ping, ever.
+Conclusion: br-0033's userspace wedged without crashing — the kernel keeps
+feeding the HW watchdog, no panic, no reset source remains (ONCE consumed,
+dead-man flag unreachable on the rc-mounted /jffs). **All flashing stopped
+per §3.8 — do not thrash.**
+
+**Guaranteed recovery (requires one power event):** metadata is
+committed=1 = br-0032 (validated, gate 20/20), both slots valid, no ONCE
+armed. **Power-cycling the AP boots the validated br-0032 from slot 1**;
+the on-/jffs dead-man's good-slot branch then auto-repairs any
+sync_boot_state commit-flip (flag still armed, by design). After that,
+follow the recovery runbook in `gt-be98-buildroot/AGENTS.md`: neutralize
+slot 2 (re-flash br-0032 artifact, `bcm_bootstate +1`, rm flags), gate,
+refresh backups.
+
+**Failure-mode taxonomy updated:** the harness covered (a) kernel
+hang/panic (ONCE+watchdog), (b) boots-but-SSH-dead (dead-man), (c) corrupt
+flash (FIT fallback) — but not (d) **userspace wedge before /jffs with no
+crash**: no reset source. Harness v2 (committed, ee4baa7/d5076ae) closes
+(d) for all future images: the dead-man flag lives on /data (rail-mounted
+at S25, before anything that can hang in rc), so the countdown+reboot
+happens even in a br-0033-style wedge; S27 breadcrumbs on /data give
+post-hoc forensics. br-0033's root cause remains UNKNOWN (every removal is
+statically gated; envrams is mfg/httpd-only) — to be determined with
+breadcrumbs once the fleet is on br-0034+.
+
+Outage accounting: user nets down from 01:07 until the next power event —
+the one §3-class miss of this run; the prevention (v2 flag placement +
+smaller batches) is committed.
