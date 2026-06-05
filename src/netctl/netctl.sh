@@ -248,6 +248,62 @@ cmd_bridge(){
 	echo "[V] $bss : ${cur:-none} -> $tgt"
 }
 
+# ---- client / band steering — 802.11v BSS Transition Management (BTM) ---------
+# The OPEN steering control plane (no ASUS `bsd` daemon): hostapd_cli WNM verbs.
+# Verified live 2026-06-05 (wifi-steering.md): `set_neighbor`/`show_neighbor` build the
+# neighbor DB; `bss_tm_req` dispatches a unicast 802.11v BTM action frame to a STA to nudge
+# it to another BSS/band. The source BSS must have BSS-Transition enabled — stock confs
+# don't, but `hostapd_cli set bss_transition 1` enables it at runtime (returns OK).      [V]
+
+# band->global-operating-class + primary channel, derived from a target BSS's chanspec.
+# Best-effort 80/160 MHz global classes: 2.4G=81, 5G=128, 6G=134 (clients act mainly on
+# bssid+channel; op_class is a hint). chanspec forms: "1", "6g1/160", "108/80", "100/160".
+chanspec_to_opclass_chan(){
+	cs=$(wl -i "$1" chanspec 2>/dev/null); n=${cs%% *}
+	case "$n" in
+		6g*) ch=${n#6g}; ch=${ch%%/*}; echo "134 $ch";;
+		*)   ch=${n%%/*}; if [ "$ch" -le 14 ] 2>/dev/null; then echo "81 $ch"; else echo "128 $ch"; fi;;
+	esac
+}
+
+# steer <src-bss> <sta-mac> <target-bss|target-bssid> [opclass chan] : send an 802.11v BTM
+# request asking <sta> (associated on <src-bss>) to move to <target>. If <target> is a BSS
+# ifname on this AP, its BSSID + op_class/channel are derived automatically (band steering);
+# otherwise pass a raw target BSSID (+ optional opclass chan). Enables bss_transition on the
+# source BSS first (idempotent). Reports hostapd's reply: OK = frame sent; FAIL usually means
+# the STA isn't associated on <src-bss>. Add `--kick` to mark it disassoc-imminent.       [V]
+cmd_steer(){
+	kick=""; pos=""
+	for a in "$@"; do
+		if [ "$a" = "--kick" ]; then kick="disassoc_imminent=1 disassoc_timer=30"; else pos="$pos $a"; fi
+	done
+	# shellcheck disable=SC2086
+	set -- $pos
+	src="$1"; sta="$2"; tgt="$3"; oc="${4:-}"; ch="${5:-}"
+	[ -n "$tgt" ] || die "usage: steer <src-bss> <sta-mac> <target-bss|bssid> [opclass chan] [--kick]"
+	guard_bss "$src"; need hostapd_cli
+	echo "$sta" | grep -qiE '^([0-9a-f]{2}:){5}[0-9a-f]{2}$' || die "bad STA MAC: $sta"
+	# resolve target bssid + opclass/chan
+	if echo "$tgt" | grep -qE '^wl[0-9]+\.[0-9]+$'; then
+		tbssid=$(wl -i "$tgt" bssid 2>/dev/null | tr 'A-F' 'a-f'); [ -n "$tbssid" ] || die "cannot read BSSID of target $tgt"
+		set -- $(chanspec_to_opclass_chan "$tgt"); oc=${oc:-$1}; ch=${ch:-$2}
+	else
+		echo "$tgt" | grep -qiE '^([0-9a-f]{2}:){5}[0-9a-f]{2}$' || die "target must be a wlX.Y ifname or a BSSID"
+		tbssid=$(echo "$tgt" | tr 'A-F' 'a-f'); oc=${oc:-0}; ch=${ch:-0}
+	fi
+	# enable BTM on the source BSS (stock confs omit it); harmless if already on
+	hostapd_cli -i "$src" set bss_transition 1 >/dev/null 2>&1
+	echo "steer: $src -> ask $sta to move to $tbssid (opclass=$oc chan=$ch)${kick:+ [kick]}"
+	# the inline neighbor= carries bssid,bssid_info,opclass,channel,phy(9=HE) — the BTM hint
+	r=$(hostapd_cli -i "$src" bss_tm_req "$sta" pref=1 abridged=1 valid_int=100 \
+		neighbor="${tbssid},0,${oc},${ch},9" $kick 2>&1)
+	echo "hostapd: $r"
+	echo "$r" | grep -qi OK && echo "[V] BTM request sent" || echo "[i] FAIL = STA not associated on $src (or BTM unsupported by STA)"
+}
+
+# steer-neighbors <bss> : show the 802.11v neighbor DB used by bss_tm_req on this BSS. [V]
+cmd_steer_neighbors(){ guard_bss "$1"; need hostapd_cli; hostapd_cli -i "$1" show_neighbor 2>&1; }
+
 # ---- DIRECT BSS lifecycle (no rc/restart_wireless/wlconf) — reference impl ----
 # Proves webui can own a BSS end-to-end via the driver alone. See ../webui-direct-wifi.md.
 # is_sdn_bss : true if <bss> belongs to a live SDN net (protect user nets from bss-destroy).
@@ -464,6 +520,8 @@ netctl — GT-BE98 open network manager (reimplements cfg_server/mtlancfg net co
   scan <radio>                 site survey on one radio (neighbors+chans)[brief blip]
   chanspec set <radio> <spec> [--apply]   fix a radio's channel        [restart_wireless]
   chanspec auto <radio> [--apply]         set a radio to ACS/auto       [restart_wireless]
+  steer <src> <sta> <target> [oc ch] [--kick]  802.11v BTM: nudge a STA to another BSS/band
+  steer-neighbors <bss>        show the BTM neighbor DB for a BSS        [safe]
   ssid <bss> <name>            rename a BSS, no outage                  [safe]
   hide|show <bss>              hide/unhide a BSS, no outage             [safe]
   bss <bss> up|down            enable/disable a BSS                     [safe]
@@ -487,6 +545,7 @@ case "$c" in
 	scan) cmd_scan "$@";; chanspec) cmd_chanspec "$@";;
 	ssid) cmd_ssid "$@";; hide) cmd_hide "$@";; show) cmd_show "$@";;
 	bss) cmd_bss "$@";; bridge) cmd_bridge "$@";;
+	steer) cmd_steer "$@";; steer-neighbors) cmd_steer_neighbors "$@";;
 	bss-create) cmd_bss_create "$@";; bss-destroy) cmd_bss_destroy "$@";;
 	net-create) cmd_net_create "$@";; net-delete) cmd_net_delete "$@";; net-edit) cmd_net_edit "$@";; commit) cmd_commit;;
 	deadman) cmd_deadman "$@";; keep) cmd_keep;; snapshot) cmd_snapshot "$@";;
