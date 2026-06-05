@@ -76,12 +76,18 @@ driver, `rc` (WiFi bring-up + slot allocation). Disposition evidence: `plans/sto
 
 ## 6. Staged-flash plan (MANDATORY procedure when the human says go)
 
+0. Pre-flight (per §8): `nvram get jffs2_scripts` == 1 (webui-go boot persistence rides
+   `/jffs/scripts/*`; nvram is shared across slots so it survives the flash), and arm a
+   `push.sh`-style deadman for the trial boot (webui-go agent's request — lab mgmt path is
+   fragile around AP disruptions). Pick a window when `/tmp/webui-applying` is absent and no
+   flash upload is running.
 1. Confirm which slot is **live** (the one we're SSH'd on) — never overwrite it.
 2. Write the image to the **INACTIVE** slot only.
 3. Arm **`BOOT_SET_NEW_IMAGE_ONCE`** (one-shot trial; power-cycle = automatic return to the
    current good slot).
 4. Reboot → on the new slot verify, in order: **SSH `:2222` reachable** (hard gate) → 4 radios
-   up → the 4 user nets (Pagoa/VID30, Ramondia/VID20, DEV-SCEP/VID50, test/VID40) serve clients
+   up → the 4 user nets (Ramondia/VID20, Pagoa/VID30, DEV-SCEP/VID50, test/VID20 — per §8 live
+   correction) serve clients
    → webui-go applies/reads WiFi config.
 5. ONLY after all of step 4: commit the slot (`BOOT_SET_NEW_IMAGE`). Any failure → power-cycle
    reverts to stock slot; worst case → §5 rescue mode with stock pkgtb.
