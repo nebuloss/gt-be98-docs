@@ -18,6 +18,8 @@ Runs **on the router** (`/bin/sh /jffs/netctl.sh <cmd>`). It sets
 | `clients [bss]` | associated stations (+signal/rate via hostapd_cli) | safe [V] |
 | `channels` | per-radio chanspec + ACS exclusions | safe [V] |
 | `scan <radio>` | site survey: neighbor BSS table + channel occupancy | brief blip [V] |
+| `chanspec set <radio> <spec> [--apply]` | fix a radio's operating channel | restart_wireless [V] |
+| `chanspec auto <radio> [--apply]` | set a radio to ACS/auto (chanspec=0) | restart_wireless [V] |
 | `ssid <bss> <name>` | rename one BSS, no outage (`hostapd_cli set ssid`) | safe [V] |
 | `hide`/`show <bss>` | hide/unhide one BSS, no outage | safe [V] |
 | `bss <bss> up\|down` | enable/disable one BSS (`hostapd_cli disable/enable`) | safe [V] |

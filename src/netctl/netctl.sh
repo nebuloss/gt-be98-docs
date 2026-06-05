@@ -121,6 +121,35 @@ cmd_scan(){
 	printf '%s\n' "$out" | awk '{print $3}' | sort | uniq -c | sort -rn | awk '{printf "   ch %-12s %s\n", $2, $1}'
 }
 
+# chanspec set <radio> <spec> [--apply] : set a FIXED operating channel on one radio.
+# chanspec auto <radio> [--apply]        : set the radio to ACS (auto, nvram chanspec=0).
+# Mechanism (RE 2026-06-05): a direct `wl chanspec` is INEFFECTIVE on an AP radio (the
+# driver accepts it but the BSS config re-asserts the old channel — same pattern as
+# `wl ssid`/`wl bss`). The effective, durable path is nvram `wlX_chanspec` re-read by an
+# init: there is NO per-radio restart on stock fw (see netctl-verified.md), so apply =
+# `restart_wireless` — a brief ALL-radio blip. Leaves nvram UNCOMMITTED (reboot reverts);
+# run `netctl commit` to persist. <spec> uses wl syntax: 2.4G `6`/`1`; 5G `36/80`,`100/160`;
+# 6G `6g37/160`. There is no acsd daemon; ACS runs once at wlconf init.                [V]
+cmd_chanspec(){
+	sub="${1:-}"; r="${2:-}"
+	case "$sub" in
+		set|auto) ;;
+		*) die "usage: chanspec set <radio> <spec> [--apply] | chanspec auto <radio> [--apply]";;
+	esac
+	echo "$r" | grep -qE '^wl[0-3]$' || die "radio must be wl0|wl1|wl2|wl3 (wl3=2.4G wl0/wl1=5G wl2=6G)"
+	if [ "$sub" = set ]; then spec="${3:-}"; apply="${4:-dry}"; [ -n "$spec" ] || die "usage: chanspec set <radio> <spec> [--apply]"
+	else spec=0; apply="${3:-dry}"; fi
+	cur=$(wl -i "$r" chanspec 2>/dev/null)
+	tgt=$([ "$sub" = auto ] && echo "auto/ACS (0)" || echo "$spec")
+	echo "chanspec $sub $r: now '$cur' (nvram ${r}_chanspec=$(nvram get ${r}_chanspec)) -> $tgt"
+	echo "  apply = restart_wireless (brief ALL-radio blip; SSH on ethernet is unaffected)"
+	[ "$apply" = "--apply" ] || { echo "(dry-run; pass --apply to execute — arm 'netctl deadman' first)"; return 0; }
+	need rc
+	nvram set ${r}_chanspec="$spec"
+	service restart_wireless
+	echo "[*] applied (UNCOMMITTED): ${r}_chanspec=$spec — verify with 'netctl channels', then 'netctl commit'"
+}
+
 # net-list : parse sdn_rl + apg<N> into a network table.                          [V]
 cmd_net_list(){
 	echo "$(nvram get sdn_rl)" | tr '<' '\n' | while IFS='>' read -r idx type en vlanx subx apgx _; do
@@ -344,6 +373,8 @@ netctl — GT-BE98 open network manager (reimplements cfg_server/mtlancfg net co
   clients [bss]                associated stations (+rssi/rate)         [safe]
   channels                     per-radio chanspec + ACS exclusions      [safe]
   scan <radio>                 site survey on one radio (neighbors+chans)[brief blip]
+  chanspec set <radio> <spec> [--apply]   fix a radio's channel        [restart_wireless]
+  chanspec auto <radio> [--apply]         set a radio to ACS/auto       [restart_wireless]
   ssid <bss> <name>            rename a BSS, no outage                  [safe]
   hide|show <bss>              hide/unhide a BSS, no outage             [safe]
   bss <bss> up|down            enable/disable a BSS                     [safe]
@@ -362,7 +393,7 @@ EOF
 c="${1:-}"; shift 2>/dev/null || true
 case "$c" in
 	status) cmd_status;; net-list) cmd_net_list;; vlan-list) cmd_vlan_list;; clients) cmd_clients "$@";; channels) cmd_channels;;
-	scan) cmd_scan "$@";;
+	scan) cmd_scan "$@";; chanspec) cmd_chanspec "$@";;
 	ssid) cmd_ssid "$@";; hide) cmd_hide "$@";; show) cmd_show "$@";;
 	bss) cmd_bss "$@";; bridge) cmd_bridge "$@";;
 	net-create) cmd_net_create "$@";; net-delete) cmd_net_delete "$@";; net-edit) cmd_net_edit "$@";; commit) cmd_commit;;

@@ -168,6 +168,32 @@ strong RSSI, expected for an AP-side scan). Caveat: a scan is a **brief off-chan
 that can momentarily blip that radio's own clients — negligible on an idle radio (e.g.
 wl2/6G), tolerable elsewhere (WiFi is fair game; SSH is on ethernet).
 
+## Channel control — `netctl chanspec set|auto` (TASK 6b.2, VERIFIED 2026-06-05)
+
+Channel is **per-radio**, not per-BSS (all four radios — wl3/2.4G, wl0+wl1/5G, wl2/6G —
+carry the main network plus any SDN BSSes), so there is no "disposable radio." Mechanism
+findings:
+- A direct `wl -i <radio> chanspec <spec>` is **INEFFECTIVE on an AP radio**: the driver
+  prints "Chanspec set to 0x…" but the BSS config immediately re-asserts the old channel
+  (same override pattern as `wl ssid`/`wl bss` on a hostapd-managed BSS). [V]
+- There is **no `acsd`/`chanim` daemon** running and `wl autochannel` is *Unsupported* on
+  this driver — ACS runs once at `wlconf` init. [V]
+- The effective, durable path is **nvram `wlX_chanspec` + a re-init**. Stock fw has no
+  per-radio restart, so apply = `restart_wireless` (a brief all-radio blip). `wlX_chanspec=0`
+  = ACS/auto; a literal spec (`6`, `36/80`, `100/160`, `6g37/160`) = fixed. [V]
+
+Live result [V]: `chanspec set wl2 6g33/160 --apply` moved wl2 from `6g1/160` → `6g33/160`;
+`chanspec auto wl2 --apply` returned it to ACS (`6g1/160`). Crucially, `restart_wireless`
+**rebuilt every existing SDN BSS and re-added it to its bridge automatically** (wl3.2/wl0.1/
+wl1.1→br50, wl3.3→br30, wl3.5/wl0.2/wl1.2→br20 all `isup=1`) — no `restart_sdn` needed for
+*existing* nets (unlike a *new* net, which still needs it to build a fresh bridge).
+
+No-outage alternative (NOT yet live-verified, [P]): `hostapd_cli -i <bss> chan_switch
+<count> <freq> [center_freq1= bandwidth= sec_channel_offset=]` does a CSA so associated
+clients follow without a drop. Left unverified because the 6G/160 MHz center-freq math is
+error-prone to validate on the live main network; the nvram+restart path above is the
+robust, verified one. 6 GHz freq = 5950 + 5·channel MHz (6g1 = 5955).
+
 **owl-native scan deferred (honest scope note):** `WLC_SCAN`/`WLC_SCAN_RESULTS` return a
 **version-stamped, large `wl_bss_info_t`** whose field offsets vary by driver build —
 hand-parsing it from owl's raw-ioctl path is brittle and offers no advantage over the
