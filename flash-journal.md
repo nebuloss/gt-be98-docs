@@ -245,3 +245,26 @@ content, valid fallback). M2 commit-proof: DONE (rollback fire-proof next).
 **M2 COMPLETE: trial→rollback (2A) and trial→commit (2B) both proven on
 hardware.** Total flash session: 3 flashes, 4 reboots. Outage windows ≈
 3×3 min, evening, 0 clients associated at snapshot times.
+
+---
+
+## 2026-06-06 00:52–01:00 — FLASH #4 (M3): br-0032 → slot 1 — GATE 20/20, COMMITTED
+
+- Image: `GT-BE98_br-0032_nand_squashfs.pkgtb` sha256 `6c3b8918…e117`
+  (archived in `~/be98/artifacts-br/`). Content = 0031 rootfs blob +
+  3 files: `/rom/etc/gt-be98-release` (identity marker),
+  `/rom/etc/init.d/trial-deadman.sh` + `S26trial-deadman` rail link,
+  `/sbin/trial-deadman` (in-image dead-man). **Local diff proof:** zero
+  content changes vs blob, 3 ADDED + 1 symlink (rootfs-diff.sh).
+- Trial sequence nominal (3rd consecutive ONCE success): flash slot 1
+  (auto-commit → repaired to 2) → ONCE → reboot 00:52 → booted slot 1.
+- **In-image dead-man worked**: `/tmp/.deadman-lock` taken by the S26 rail
+  instance, ARMED on trial slot, auto-DISARMED at T+5s by the host driver.
+- Identity verified: `release=br-0032+g701a857926a6, blobs 0031/0031`.
+- **Gate: 20/20 PASS** (incl. marker match + 3-min soak). Trial flag removed;
+  init self-commit had already promoted slot 1 (committed=1=booted ✓ stable).
+- Slot 2 = M1 (gate-validated 19/19 earlier tonight) = fallback.
+
+**M3 COMPLETE — the mutation pipeline is proven: we can change rootfs
+content safely and every image self-identifies.** Device left committed on
+br-0032, dead-man infrastructure now baked into the running image.
