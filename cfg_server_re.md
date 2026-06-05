@@ -96,3 +96,37 @@ You do NOT need cfg_server. A small open helper (in webui-go or a script) can:
 **Verdict:** the WiFi/VLAN config layer is open-API + deterministic nvram→hapd →
 fully replaceable. The remaining unknown is only the **driver re-init sequence**
 (§5.3 heavy path); everything else is documented here.
+
+## 6. Load-bearing analysis on a standalone AP (VERIFIED LIVE 2026-06-05)
+
+The question "what actually breaks if cfg_server dies?" — settled both statically and live.
+
+**cfg_server does NOT own the WiFi bring-up.** The closed hostapd-conf generator
+(`hostapd_config_be.o`) is linked into **`rc`** (`rc/Makefile` OBJS/OBJS_WPS_PBCD), and
+`shared/sysdeps/broadcom/broadcom.c:1515` does the `hostapd /tmp/%s_hapd.conf &` launch —
+all in the **`restart_wireless`/wireless-start** path. So `rc`, not cfg_server, regenerates
+the confs and starts hostapd. The slot allocator `sync_apgx_to_wlunit` is likewise exposed
+through **`rc`** independently of the daemon.
+
+**Live proof:** `killall cfg_server` →
+- all 4 radios stayed `isup=1` and beaconing; the associated client stayed associated;
+  `/tmp/wl3_hapd.conf` persisted unchanged. cfg_server is **not in the WiFi data path**.
+- the **`watchdog.c` respawned cfg_server in ~10 s** (new pid) — `watchdog.c:9958` /
+  `:10007` gate on `!pids("cfg_server")` under AP/router mode. So a bare `killall` never
+  holds on stock fw; truly retiring it needs an nvram early-return in that watchdog gate.
+
+**Separable roles of cfg_server (none load-bearing for WiFi):**
+| Role | Live artifact | Open replacement |
+|---|---|---|
+| GUI config-apply IPC | `/var/run/cfgmnt_ipc_socket` (unix STREAM) | **netctl** (nvram + `rc sync_apgx_to_wlunit` + `restart_wireless`) |
+| Status publishing | `/tmp/{clientlist,allwclientlist,aplist,chanspec_*,wiredclientlist}.json` | netctl `clients`/`scan`/`channels` from `wl`+`hostapd_cli` |
+| AiMesh coordination | TCP+UDP `:7788`; siblings `wlc_nt`,`amas_lanctrl`,`amas_ssd_cd`,`amas_portstatus`,`conn_diag` | dead weight on a standalone AP — drop |
+| Wi-Fi bring-up | — | **already `rc`'s job**, not cfg_server's |
+
+Control verbs: `service stop_cfgsync` / `service start_cfgsync` (`services.c:21595` maps the
+`cfgsync` script to `stop/start_cfgsync`; `rc stop_cfgsync` is NOT a verb — that's a C fn).
+
+**Bottom line:** on this standalone AP, cfg_server is retireable without touching WiFi —
+the prerequisite is neutralizing its **watchdog respawn**, not finding a hostapd replacement
+(`rc`/`restart_wireless` already covers that). See
+[plans/plan-remove-stock-services.md](plans/plan-remove-stock-services.md) Phase 3.

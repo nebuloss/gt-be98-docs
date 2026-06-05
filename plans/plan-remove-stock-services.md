@@ -83,9 +83,29 @@ Any daemon outside this list is a **removal target**.
   live process set.
 
 ### Phase 3 — `cfg_server` / WiFi ownership (3 options, to be decided)
-`cfg_server` is the **only** Asus daemon our networks depend on (VLAN bridge + generates
-`/tmp/wlX_hapd.conf`). Key inversion: **once cfg_server is removed, nothing regenerates
-hostapd anymore** at `restart_wireless` → the "hostapd-direct" approach becomes viable again.
+
+> **CORRECTION (VERIFIED LIVE 2026-06-05):** the long-held premise here — that cfg_server
+> generates `/tmp/wlX_hapd.conf` and that removing it stops hostapd regeneration — is
+> **FALSE**. The hostapd conf generator (`hostapd_config_be.o`, closed) is linked into
+> **`rc`** (`rc/Makefile` OBJS/OBJS_WPS_PBCD), and `shared/sysdeps/broadcom/broadcom.c:1515`
+> launches `hostapd /tmp/%s_hapd.conf` — both in the **`restart_wireless`/wireless-start
+> path, not cfg_server**. Empirical proof: `killall cfg_server` left **all 4 radios
+> beaconing, the connected client associated, and `/tmp/wl3_hapd.conf` intact**; the
+> **watchdog respawned cfg_server in ~10 s** (new pid). So cfg_server is **NOT load-bearing
+> for WiFi operation** on a standalone AP. Its real, separable roles: the GUI config-apply
+> IPC (`/var/run/cfgmnt_ipc_socket`) — already replaced by **netctl** (nvram + `rc
+> sync_apgx_to_wlunit` + `restart_wireless`); status-JSON publishing
+> (`/tmp/{clientlist,aplist,chanspec_*}.json`) — reproducible from `wl`/`hostapd_cli`
+> (netctl `clients`/`scan`/`channels`); and AiMesh coordination (`:7788`, `amas_*`,
+> `conn_diag`, `wlc_nt`) — pure dead weight here. **Implication:** option (b) (webui owns
+> WiFi via netctl) needs NO hostapd-direct rewrite — `restart_wireless` already regenerates
+> the confs from nvram with cfg_server gone. The only thing that must change to truly retire
+> cfg_server is the **`watchdog.c` respawn gate** (`watchdog.c:9958/10007`,
+> `!pids("cfg_server")`) — a Phase-2-style nvram early-return. Verbs: `service
+> stop_cfgsync`/`start_cfgsync` (services.c:21595 maps script `cfgsync`).
+
+`cfg_server` was believed the **only** Asus daemon our networks depend on (VLAN bridge +
+hostapd conf). Per the correction above, the WiFi dependency is on **`rc`**, not cfg_server.
 - **(a) Keep** cfg_server (local, cloudless) as the only tolerated Asus daemon — 90% of the goal.
 - **(b) Rewrite**: the webui owns hostapd (writes the confs + bridges via `brctl`);
   revives the abandoned hostapd-direct approach (cf. `phase-b-webui-owns-wifi.md`,
