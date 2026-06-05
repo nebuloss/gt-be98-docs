@@ -14,12 +14,16 @@ Runs **on the router** (`/bin/sh /jffs/netctl.sh <cmd>`). It sets
 |---|---|---|
 | `status` | radios + SDN networks + bridges + clients | safe [V] |
 | `net-list` | list SDN networks from `sdn_rl`+`apg<N>` | safe [V] |
-| `ssid <bss> <name>` | rename one BSS, no outage | safe [V] |
+| `vlan-list` | VLAN bridges + BSS/fronthaul/eth members | safe [V] |
+| `clients [bss]` | associated stations (+signal/rate via hostapd_cli) | safe [V] |
+| `channels` | per-radio chanspec + ACS exclusions | safe [V] |
+| `ssid <bss> <name>` | rename one BSS, no outage (`hostapd_cli set ssid`) | safe [V] |
 | `hide`/`show <bss>` | hide/unhide one BSS, no outage | safe [V] |
-| `bss <bss> up\|down` | enable/disable one BSS | safe [V] |
+| `bss <bss> up\|down` | enable/disable one BSS (`hostapd_cli disable/enable`) | safe [V] |
 | `bridge <bss> <br>` | move a WiFi BSS to a VLAN bridge (`brctl`) | safe [V] |
 | `net-create <apg> <vid> <ssid> <psk> [--apply]` | create an SDN WiFi VLAN | restart_wireless [V] |
 | `net-delete <apg> [--apply]` | tear down an SDN WiFi VLAN | restart_wireless [V] |
+| `net-edit <apg> ssid <name>` | rename all of an apg's BSS, no outage | safe [V] |
 | `commit` | persist running nvram after verifying | — |
 | `deadman [secs]` / `keep` | dead-man reboot / disarm | safety |
 | `snapshot [file]` | dump nvram for reversible tests | safe |
