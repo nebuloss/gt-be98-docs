@@ -106,6 +106,9 @@ Any daemon outside this list is a **removal target**.
 
 `cfg_server` was believed the **only** Asus daemon our networks depend on (VLAN bridge +
 hostapd conf). Per the correction above, the WiFi dependency is on **`rc`**, not cfg_server.
+→ The exact retire patch (gate on nvram `cfgmnt_enable`, 0024/0026 model) is written up in
+[patch-0028-retire-cfg_server.md](patch-0028-retire-cfg_server.md) (+ ready `.patch` in
+`../gt-be98-firmware/patches/0028-cfgmnt-disable-by-default.patch`).
 - **(a) Keep** cfg_server (local, cloudless) as the only tolerated Asus daemon — 90% of the goal.
 - **(b) Rewrite**: the webui owns hostapd (writes the confs + bridges via `brctl`);
   revives the abandoned hostapd-direct approach (cf. `phase-b-webui-owns-wifi.md`,
