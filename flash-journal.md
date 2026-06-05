@@ -64,3 +64,184 @@ images: stock pkgtb `a6f092ca…0fc5e1`, custom 0031 pkgtb `a7dcd0c1…fa01`
 
 **Verdict:** device healthy on committed known-good slot 1; safe to proceed to
 Phase 1 (harness implementation, no reboots).
+
+---
+
+## 2026-06-05 — Phase 1.1: bcm_bootstate semantics verified live (no reboot)
+
+All tests metadata/register-only (read at boot only), each step read back,
+device left at baseline (committed=1, valid 1,2, seq 21,20, reset_reason=0x34,
+Reboot Partition: First). Verified:
+
+1. **Two independent stores**: (a) flash metadata `committed/valid/seq`
+   (U-Boot TPL slot choice); (b) the reset-reason register
+   (`/proc/bootstate/reset_reason`) carrying the ONCE/ACTIVATE signal.
+2. `bcm_bootstate +N` → deterministic metadata write `committed=N`
+   (`wr_metadata` line confirms). **The repair primitive.**
+3. `bcm_bootstate -N` → `committed=0` (NOT "back to the other slot").
+   With committed=0 the bootloader falls back to higher-seq. **Never use.**
+4. `bcm_bootstate 4` (OLD_ONCE) → writes ACTIVATE (reset_reason 0x34→**1**),
+   metadata UNCHANGED, display flips to "Reboot Partition: Second"
+   (= non-committed slot). `bcm_bootstate 3` is the same arm (boot
+   non-committed once); NEW/OLD only differ in intent labeling.
+5. **Disarm ONCE**: `echo steadystate > /proc/bootstate/reset_reason` →
+   restores 0x34 (LINUX_RUN|WATCHDOG), Reboot Partition back to committed.
+   (`bcm_bootstate 5`/`7` proved to be no-ops in both tested conditions —
+   do not rely on them.)
+6. Exit codes unreliable (`bcm_bootstate 4` exited 1 despite succeeding) —
+   harness must verify by reading state, not by exit code.
+
+**Self-commit mechanism located in source** (`src/router/rc/init.c:27102`,
+`sync_boot_state()`): runs LATE in init (after `start_services` +
+`success_start_service=1`); on a ONCE-boot of the higher-seq slot it sees
+booted != reboot-policy partition and calls
+`setBootImageState(BOOT_SET_NEW_IMAGE)` = commits the trial slot. The
+`/jffs/scripts/services-start` hook fires BEFORE it ⇒ a services-start
+dead-man is alive before the self-commit can occur, and its fire action must
+be `bcm_bootstate +<goodslot>` then `reboot`.
+
+**Trial-flash sequence derived (for Phase 2):** running on good slot G,
+trial slot T = 3-G:
+1. preflight + scp image + sha256 verify on device
+2. `hnd-write <pkgtb>` → writes INACTIVE slot T, seq=max+1, auto-commits T
+   (exit 99 = normal)
+3. `bcm_bootstate +G` → repair: commit back the good slot (verify wr_metadata)
+4. arm dead-man flag + `/jffs/scripts/services-start` hook
+5. `bcm_bootstate 3` → arm ONCE (verify reset_reason=1, Reboot Partition = T)
+6. verify full metadata picture, then reboot
+
+---
+
+## 2026-06-05 — Phase 1.2/1.3: harness implemented + dry-run
+
+Harness committed to `gt-be98-buildroot` @ ea31060
+(`board/gt-be98/trial/{trial-deadman,trial-flash.sh,gate-check.sh}`).
+
+Dry-runs on the live device (no reboot, no flash):
+- dead-man **slot-mismatch branch**: armed flag TRIAL_SLOT=2 while running
+  slot 1 → correctly logged "rollback or stale flag", moved flag to
+  `.rolledback`, exit 0, no action. PASS
+- dead-man **disarm branch**: armed TRIAL_SLOT=1 with `/tmp/deadman-disarm`
+  pre-created → "ARMED … DISARMED at T+0s", flag → `.disarmed`, no lingering
+  process. PASS
+- **fire branch intentionally NOT dry-run** (it reboots) — proven in Phase 2A.
+- `services-start` hook installed idempotently (1 line, guarded by armed-flag
+  existence; webui-go content preserved; backup at
+  `/jffs/scripts/services-start.pre-harness`). sysrq enabled (=1),
+  `hnd-write` at /sbin/hnd-write, ~1 GB free tmpfs.
+
+Device left at baseline: committed=1, valid 1,2, reset_reason=0x34, no flag.
+
+---
+
+## 2026-06-05 ~23:14 — FLASH #1 (Phase 2A attempt 1): M1 → slot 2 — TRIAL NEVER BOOTED (incident + major finding)
+
+- Image: Buildroot M1 pkgtb (embedded bootfs/rootfs byte-identical to validated
+  0031), sha256 `d60641f5…` (run-2 outer wrapper differs only in FIT timestamps).
+- Procedure (as derived in Phase 1.1): hnd-write slot 2 (seq 21,22, auto-commit
+  2) → `bcm_bootstate +1` repair (committed=1 verified) → `bcm_bootstate 3`
+  (reset_reason=1/ACTIVATE verified, Reboot Partition: Second) → reboot 23:14.
+- **Observed**: single ~2-min boot, SSH answered on **slot 1**. Dead-man
+  correctly took its slot-mismatch branch (its first real-conditions exercise —
+  worked). `reset_reason=0x34, old=0` ⇒ the register was ZERO when U-Boot TPL
+  read it: **the armed ACTIVATE did not survive the reboot**. And metadata
+  read **committed=2** post-boot: init's `sync_boot_state` had re-committed the
+  higher-seq slot 2 during the slot-1 boot. Repaired immediately
+  (`bcm_bootstate +1`, wr_metadata verified).
+
+**Root cause (source-verified):** GT-BE98/BCM6813 is **SMC-based boot**. The
+image choice U-Boot TPL uses comes from `misc_periph_spare[1]` filled by the
+SMC ROM; the reset-reason-register ACTIVATE path (`board_tpl.c:666`) is
+effectively dead code here — the scratch register does not survive the
+PSCI/watchdog reset path, and no BA_SVC RPC exposes a "boot other image once"
+service (`ba_rpc_svc.h`: only RPRT_BOOT_SUCCESS / GET_BOOT_FAIL_CNT etc.).
+**There is NO one-shot trial-boot mechanism on this board.** The
+`recovery-procedure.md` claim that `bcm_bootstate 3` arms a working ONCE-trial
+is WRONG (and the §9 go-no-go "ONCE-trial" interpretation is unsound — that
+flash very likely double-booted through the stock slot; net effect was a
+commit-before-boot upgrade).
+
+**Also live-confirmed:** with both slots valid, the bootloader boots the
+COMMITTED slot even when the other has higher seq (slot 1 booted with seq
+21<22) — and `sync_boot_state` then re-commits the higher-seq slot on every
+boot of the lower-seq one.
+
+**Harness redesigned (committed to gt-be98-buildroot):**
+- A trial = flash inactive slot (auto-commits it — ASUS semantics, unavoidable)
+  + dead-man armed BEFORE the flash. The dead-man IS the rollback: fire =
+  `bcm_bootstate +GOOD` + reboot.
+- The armed flag is **never consumed by failure paths**: it re-protects across
+  power-cycles (a broken-but-booting trial slot always gets returned), and the
+  dead-man's good-slot branch repairs the sync_boot_state re-commit (sleep 180s
+  then `+GOOD`). Only the operator ends a trial: PASS → rm flag (trial slot
+  stays committed = new good); FAIL → re-flash good image over the trial slot
+  (neutralizes seq superiority), then rm flag.
+- **Scope rule (absolute): only images reusing the PROVEN bootfs may be
+  trial-flashed.** A changed kernel that hangs would crash-loop with no
+  software escape (no TPL fallback support; SMC boot-watchdog fallback
+  unverified). All planned milestones (M2–M5) reuse the 0031 bootfs.
+- Residual gap accepted & bounded: kernel-hang is impossible for
+  identical-bootfs images; corrupt flash writes are covered by U-Boot
+  FIT-load fallback to the other slot [V-source].
+
+### CORRECTION (same night, ~23:30): the above root-cause was WRONG
+
+The trial **DID boot**: `/proc/cmdline` on the live system read
+`root=/dev/ubiblock0_6` = **rootfs2** — the device had been running the M1
+trial on slot 2 since 23:16. **`/proc/bootstate/active_image` LIES about the
+booted slot** (read 1 while running rootfs2); `bcm_bootstate`'s "Booted
+Partition" and the cmdline are the truth. Corrected facts:
+
+1. **ONCE/ACTIVATE WORKS on this board** (boots the non-committed slot once,
+   consumed at boot). recovery-procedure.md was right; the "SMC ignores it"
+   theory and the first redesign rationale were wrong.
+2. The dead-man's slot detection via active_image took the wrong branch
+   during the trial (thought it was on the good slot) — fixed: all harness
+   scripts now derive the booted slot from the cmdline (ubi.block=0,4→1,
+   0,6→2).
+3. My "+1 repair" at 23:25 was made under the false belief we were on slot 1;
+   the subsequent flash #2 (FATAL'd on a then-wrong assertion, no harm) went
+   to slot 1 — overwriting the original §9-validated 0031 artifact with M1
+   (content byte-identical; 0031 pkgtb archived on host). Slot 1 now: M1
+   seq 23, slot 2: M1 seq 22 (running).
+4. `sync_boot_state` self-commits only when booted ≠ reboot-policy (trial
+   boots); normal boots (booted==committed) are stable even with the other
+   slot at higher seq.
+
+## 2026-06-05 23:37 — FLASH #1+#2 outcome: GATE PASS on slot-2 M1 → COMMITTED (M2 commit-proof)
+
+The running slot-2 M1 (up 20+ min serving the production nets) passed the
+full validation gate **19/19** (radios ×4, Ramondia/Pagoa/DEV-SCEP hostapd,
+11 hostapd instances, br0 IP, jffs rw, eapd/wlceventd/mcpd/watchdog up,
+boot_failed_count=0, dmesg clean, 3-min daemon-pid soak; gate-script defects
+found & fixed along the way: dnsmasq is NOT part of the 0031 baseline on this
+AP, dropbear soak must track the master pidfile). Committed slot 2
+(`+2`, wr_metadata verified), trial flag removed.
+
+**State: booted=2=committed, valid 1,2, seq 23,22 — a Buildroot-assembled
+pkgtb is the device's committed baseline.** Slot 1 = M1 seq 23 (identical
+content, valid fallback). M2 commit-proof: DONE (rollback fire-proof next).
+
+---
+
+## 2026-06-05 23:41–23:51 — FLASH #3 (Phase 2A fire-proof): M1 → slot 1, deliberate no-disarm — **DEAD-MAN PROVEN**
+
+- Image: M1 pkgtb `05c48215…` → slot 1 via the fixed trial-flash.sh.
+- Sequence verified at each step: hnd-write auto-committed slot 1 →
+  `+2` repair (committed=2) → ONCE armed (reset_reason=1) → reboot 23:41:50.
+- **ONCE worked again** (2/2 with correct detection): booted slot 1 (cmdline
+  `ubi.block=0,4`), SSH up ~2.5 min after reboot. Dead-man **ARMED on trial
+  slot 1** (correct branch with the cmdline-based detection).
+- init self-commit observed as predicted: committed flipped to 1 (trial)
+  during the trial boot (deadman's later `rd_metadata` shows committed 1).
+- **No disarm given. Dead-man FIRED at 23:49:02** ("WINDOW EXPIRED"):
+  re-committed good slot 2 (`wr_metadata: committed 2`, repairing the init
+  self-commit), rebooted. Device returned by 23:51: booted=2, committed=2.
+- Good-slot branch engaged on the return boot ("will repair commit in 180s")
+  — belt-and-braces against sync_boot_state, flag kept until operator
+  cleanup. Operator cleanup done (flag removed; slot 1 holds M1 = identical
+  content, no re-flash needed). Gate on slot 2: **18/18 PASS** (--quick).
+
+**M2 COMPLETE: trial→rollback (2A) and trial→commit (2B) both proven on
+hardware.** Total flash session: 3 flashes, 4 reboots. Outage windows ≈
+3×3 min, evening, 0 clients associated at snapshot times.

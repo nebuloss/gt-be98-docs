@@ -113,3 +113,35 @@ Three independent reasons, all [V-source]:
 | 4 | https://www.snbforums.com/threads/how-to-use-rescue-tool-firmware-restoration-on-asus-router.29434/ | Community rescue how-to (ping/TTL detection, TFTP alternative) |
 | 5 | https://www.snbforums.com/threads/asus-ax88u-pro-router-reset-puts-it-into-rescue-only-shows-power-5ghz-button-no-luck-despite-succesfull-rescue-restoration.90703/ | Sibling-model LED behaviour in rescue mode |
 | 6 | Local vendor tree `/home/guillaume/be98/gt-be98-firmware/vendor/asuswrt-merlin.ng` | All [V-source] claims (file:line cited inline) |
+
+---
+
+## CORRECTIONS — live-verified 2026-06-05 (Buildroot-takeover flash session)
+
+Supersedes anything above that conflicts; all [V-live] on the production
+GT-BE98 (custom 0031 → Buildroot M1 flashes, see flash-journal.md):
+
+1. **`/proc/bootstate/active_image` does NOT report the booted slot.** It read
+   `1` while the device was demonstrably running rootfs2 (`/proc/cmdline`
+   `root=/dev/ubiblock0_6`, `ubi.block=0,6`). The reliable booted-slot sources
+   are the kernel cmdline (`ubi.block=0,4` = slot 1, `0,6` = slot 2) and
+   `bcm_bootstate`'s "Booted Partition" line. Any tooling keyed on
+   active_image is wrong.
+2. **ONCE/ACTIVATE one-shot trial WORKS**: `bcm_bootstate 3` writes ACTIVATE
+   (0x1) into `/proc/bootstate/reset_reason`; the next boot loads the
+   NON-committed slot once; the ACTIVATE is consumed during that boot. Disarm
+   without rebooting: `echo steadystate > /proc/bootstate/reset_reason`
+   (restores 0x34).
+3. **`bcm_bootstate +N` / `-N`**: `+N` deterministically writes metadata
+   `committed=N` (watch for the `wr_metadata` line). `-N` leaves
+   **committed=0** (bootloader then falls back to higher seq) — avoid.
+   States 5/7 were observed as no-ops; exit codes are unreliable — always
+   verify by re-reading state.
+4. **`hnd-write` auto-commits the slot it writes** (and correctly targets the
+   non-booted slot as determined by the real mount, not active_image).
+5. **ASUS init self-commit** (`sync_boot_state`, `rc/init.c:27102`, runs after
+   start_services): on any boot where booted != reboot-policy partition it
+   commits the higher-seq slot. In practice: a ONCE-trial boot self-commits
+   the trial slot within ~2 min of boot. Normal boots (booted==committed) are
+   stable. Trial harnesses must repair the commit at rollback time — see
+   `gt-be98-buildroot/board/gt-be98/trial/`.
