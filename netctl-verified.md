@@ -157,6 +157,23 @@ nvram path (`net-create`/`net-edit` set nvram too; `netctl commit` persists). A
 **no-outage PSK change has no reliable path** while cfg_server owns the conf (hostapd has
 no `reconfigure` verb) → use `net-delete` + `net-create`.
 
+## Site survey — `netctl scan <radio>` (TASK 6b, VERIFIED 2026-06-05)
+
+`scan <radio>` triggers `wl <r> scan` and parses `wl scanresults` into a neighbor table
+(BSSID / RSSI / chanspec / security / SSID, strongest first) plus a per-channel occupancy
+histogram for channel planning. Verified live on all bands: wl3=2.4G, wl0/wl1=5G, wl2=6G —
+correctly decodes channel widths (`108/80`, `100/160`, `136u`, `6g37/160`) and security
+(`WPA2`, `WPA3-SAE`, `Open`); hidden SSIDs show `<hidden>`; the AP's own BSSes appear (very
+strong RSSI, expected for an AP-side scan). Caveat: a scan is a **brief off-channel dwell**
+that can momentarily blip that radio's own clients — negligible on an idle radio (e.g.
+wl2/6G), tolerable elsewhere (WiFi is fair game; SSH is on ethernet).
+
+**owl-native scan deferred (honest scope note):** `WLC_SCAN`/`WLC_SCAN_RESULTS` return a
+**version-stamped, large `wl_bss_info_t`** whose field offsets vary by driver build —
+hand-parsing it from owl's raw-ioctl path is brittle and offers no advantage over the
+already-correct stock `wl` parser the shell `scan` wraps. owl stays the open *read* path
+for the small fixed-layout iovars; bulk scan parsing is left to the (robust) shell wrapper.
+
 ## RE references
 - `rc` dispatch: `rc.c:540` → `sync_apgx_to_wlunit(NULL)`.
 - header: `cfg_mnt/cfg_mtlan.h` — `_sync_apgx_to_wlunit(int json2jffs, json_object*)`,

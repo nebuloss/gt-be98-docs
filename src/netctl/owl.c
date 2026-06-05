@@ -16,6 +16,11 @@
  *
  * RE refs: shared/wl_linux.c (ioctl path), wlioctl.h (wl_ioctl_t, wlc_ssid_t),
  * wlioctl_defs.h (command numbers). See ../../netctl-verified.md / wl-interface.md.
+ *
+ * Scope: owl is the open read path for the small FIXED-layout iovars. A site survey
+ * (WLC_SCAN/WLC_SCAN_RESULTS) is deliberately NOT here — its wl_bss_info_t is large and
+ * version-stamped (offsets vary per driver build), so it lives in `netctl scan <radio>`,
+ * which robustly parses the stock `wl scanresults` text instead.
  */
 #include <stdio.h>
 #include <stdlib.h>

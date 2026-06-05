@@ -94,6 +94,33 @@ cmd_channels(){
 	done
 }
 
+# scan <radio> : passive site survey on ONE radio for channel planning. Triggers
+# `wl <r> scan` (a brief off-channel dwell — can momentarily blip that radio's own
+# clients; harmless on an idle radio e.g. wl2/6G) then parses `wl scanresults` into a
+# neighbor table (BSSID/RSSI/channel/security/SSID) + a per-channel occupancy histogram.
+# Read-only apart from the scan itself. Radios: wl3=2.4G wl0/wl1=5G wl2=6G.            [V]
+cmd_scan(){
+	r="${1:-}"; [ -n "$r" ] || die "usage: scan <radio>  (wl0|wl1|wl2|wl3); wl3=2.4G wl0/wl1=5G wl2=6G"
+	ip link show "$r" >/dev/null 2>&1 || die "no such radio: $r"
+	echo "scanning $r (brief off-channel dwell)..." >&2
+	wl -i "$r" scan 2>/dev/null
+	sleep 3
+	out=$(wl -i "$r" scanresults 2>/dev/null | awk '
+		function flush(){ if(bssid!=""){ printf "%-17s %5s %-12s %-9s %s\n", bssid, rssi, chan, sec, ssid } }
+		/^SSID:/  { flush(); ssid=$0; sub(/^SSID: /,"",ssid); gsub(/"/,"",ssid); if(ssid=="")ssid="<hidden>";
+		            bssid=""; rssi="?"; chan="?"; sec="Open" }
+		/RSSI:/   { for(i=1;i<=NF;i++){ if($i=="RSSI:")rssi=$(i+1); if($i=="Channel:")chan=$(i+1) } }
+		/^BSSID:/ { bssid=$2 }
+		/RSN \(/  { s=$0; sub(/.*RSN \(/,"",s); sub(/\).*/,"",s); sec=s }
+		/^WPA:/   { if(sec=="Open")sec="WPA" }
+		END{ flush() }')
+	n=$(printf '%s\n' "$out" | grep -c .)
+	printf "%-17s %5s %-12s %-9s %s\n" "BSSID" "RSSI" "CHANNEL" "SECURITY" "SSID"
+	printf '%s\n' "$out" | sort -k2 -rn          # strongest (least-negative RSSI) first
+	echo "-- $n neighbor BSS on $r; channel occupancy --"
+	printf '%s\n' "$out" | awk '{print $3}' | sort | uniq -c | sort -rn | awk '{printf "   ch %-12s %s\n", $2, $1}'
+}
+
 # net-list : parse sdn_rl + apg<N> into a network table.                          [V]
 cmd_net_list(){
 	echo "$(nvram get sdn_rl)" | tr '<' '\n' | while IFS='>' read -r idx type en vlanx subx apgx _; do
@@ -316,6 +343,7 @@ netctl — GT-BE98 open network manager (reimplements cfg_server/mtlancfg net co
   vlan-list                    VLAN bridges + BSS/fronthaul/eth members [safe]
   clients [bss]                associated stations (+rssi/rate)         [safe]
   channels                     per-radio chanspec + ACS exclusions      [safe]
+  scan <radio>                 site survey on one radio (neighbors+chans)[brief blip]
   ssid <bss> <name>            rename a BSS, no outage                  [safe]
   hide|show <bss>              hide/unhide a BSS, no outage             [safe]
   bss <bss> up|down            enable/disable a BSS                     [safe]
@@ -334,6 +362,7 @@ EOF
 c="${1:-}"; shift 2>/dev/null || true
 case "$c" in
 	status) cmd_status;; net-list) cmd_net_list;; vlan-list) cmd_vlan_list;; clients) cmd_clients "$@";; channels) cmd_channels;;
+	scan) cmd_scan "$@";;
 	ssid) cmd_ssid "$@";; hide) cmd_hide "$@";; show) cmd_show "$@";;
 	bss) cmd_bss "$@";; bridge) cmd_bridge "$@";;
 	net-create) cmd_net_create "$@";; net-delete) cmd_net_delete "$@";; net-edit) cmd_net_edit "$@";; commit) cmd_commit;;

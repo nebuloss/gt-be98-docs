@@ -17,6 +17,7 @@ Runs **on the router** (`/bin/sh /jffs/netctl.sh <cmd>`). It sets
 | `vlan-list` | VLAN bridges + BSS/fronthaul/eth members | safe [V] |
 | `clients [bss]` | associated stations (+signal/rate via hostapd_cli) | safe [V] |
 | `channels` | per-radio chanspec + ACS exclusions | safe [V] |
+| `scan <radio>` | site survey: neighbor BSS table + channel occupancy | brief blip [V] |
 | `ssid <bss> <name>` | rename one BSS, no outage (`hostapd_cli set ssid`) | safe [V] |
 | `hide`/`show <bss>` | hide/unhide one BSS, no outage | safe [V] |
 | `bss <bss> up\|down` | enable/disable one BSS (`hostapd_cli disable/enable`) | safe [V] |
