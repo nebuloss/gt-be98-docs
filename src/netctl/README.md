@@ -25,6 +25,8 @@ Runs **on the router** (`/bin/sh /jffs/netctl.sh <cmd>`). It sets
 | `hide`/`show <bss>` | hide/unhide one BSS, no outage | safe [V] |
 | `bss <bss> up\|down` | enable/disable one BSS (`hostapd_cli disable/enable`) | safe [V] |
 | `bridge <bss> <br>` | move a WiFi BSS to a VLAN bridge (`brctl`) | safe [V] |
+| `bss-create <radio> <ssid> [br]` | create+up an OPEN BSS **directly** (`wl interface_create ap`) — no rc/wlconf | direct [V] |
+| `bss-destroy <wlX.Y>` | tear down a bss-create'd BSS (`wl interface_remove`); refuses SDN nets | direct [V] |
 | `net-create <apg> <vid> <ssid> <psk> [--bands 2.4,5,6\|all] [--apply]` | create an SDN WiFi VLAN (multi-band) | restart_wireless [V] |
 | `net-delete <apg> [--apply]` | tear down an SDN WiFi VLAN | restart_wireless [V] |
 | `net-edit <apg> ssid <name>` | rename all of an apg's BSS, no outage | safe [V] |

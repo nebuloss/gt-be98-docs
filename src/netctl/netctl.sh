@@ -248,6 +248,50 @@ cmd_bridge(){
 	echo "[V] $bss : ${cur:-none} -> $tgt"
 }
 
+# ---- DIRECT BSS lifecycle (no rc/restart_wireless/wlconf) — reference impl ----
+# Proves webui can own a BSS end-to-end via the driver alone. See ../webui-direct-wifi.md.
+# is_sdn_bss : true if <bss> belongs to a live SDN net (protect user nets from bss-destroy).
+is_sdn_bss(){ grep -q "\"wl_ifname\":\"$1\"" /jffs/.sys/cfg_mnt/apg_ifnames_used.json 2>/dev/null; }
+
+# bss-create <radio> <ssid> [bridge] : create an OPEN BSS DIRECTLY — `wl interface_create ap`
+# (runtime vif, no wlconf) + `wl ssid` + `wl bss up` (+ optional `brctl addif`). Prints the
+# new ifname. For WPA, run your own `hostapd -B <conf>` on the returned iface (see doc). [V]
+cmd_bss_create(){
+	radio="$1"; ssid="$2"; br="${3:-}"
+	[ -n "$ssid" ] || die "usage: bss-create <radio> <ssid> [bridge]   (radio=wl0..wl3)"
+	echo "$radio" | grep -qE '^wl[0-3]$' || die "radio must be wl0|wl1|wl2|wl3"
+	need wl
+	out=$(wl -i "$radio" interface_create ap 2>&1)
+	new=$(echo "$out" | sed -n 's/.*ifname: \(wl[0-9]*\.[0-9]*\).*/\1/p' | head -1)
+	[ -n "$new" ] || die "interface_create failed: $out"
+	wl -i "$new" ssid "$ssid" >/dev/null 2>&1
+	wl -i "$new" bss up >/dev/null 2>&1
+	if [ -n "$br" ]; then
+		is_protected_br "$br" && { wl -i "$new" interface_remove >/dev/null 2>&1; die "refusing protected bridge $br"; }
+		brctl addbr "$br" 2>/dev/null; ip link set "$br" up 2>/dev/null
+		brctl addif "$br" "$new" 2>/dev/null
+	fi
+	echo "[V] created $new ssid=$ssid bss=$(wl -i $new bss 2>/dev/null) bssid=$(wl -i $new bssid 2>/dev/null)${br:+ bridge=$br}"
+	echo "$new"
+}
+
+# bss-destroy <wlX.Y> : tear down a BSS created by bss-create — `wl bss down` + unbridge +
+# `wl interface_remove`. REFUSES SDN-managed user nets (use net-delete) and radio primaries. [V]
+cmd_bss_destroy(){
+	bss="${1:-}"; [ -n "$bss" ] || die "usage: bss-destroy <wlX.Y>"
+	echo "$bss" | grep -qE '^wl[0-3]\.[0-9]+$' || die "not a BSS vif: $bss (expected wlX.Y)"
+	is_protected_if "$bss" && die "refusing protected interface $bss"
+	is_sdn_bss "$bss" && die "$bss is an SDN-managed net (use net-delete, not bss-destroy)"
+	ip link show "$bss" >/dev/null 2>&1 || die "no such BSS: $bss"
+	cur=$(for b in $(brctl show 2>/dev/null | awk 'NF>=4{print $1} NF==1{print $1}'); do brctl show "$b" 2>/dev/null | grep -qw "$bss" && echo "$b"; done | head -1)
+	wl -i "$bss" bss down 2>/dev/null
+	[ -n "$cur" ] && brctl delif "$cur" "$bss" 2>/dev/null
+	out=$(wl -i "$bss" interface_remove 2>&1)
+	sleep 1   # interface_remove unregisters the netdev asynchronously
+	gone=$(ip link show "$bss" >/dev/null 2>&1 && echo NO || echo yes)
+	echo "[V] destroyed $bss (removed=$gone${cur:+, was in $cur})${out:+ [$out]}"
+}
+
 # ---- structural apply (restart_wireless) — GATED -----------------------------
 # get_cap_mac : the router's own DUT MAC (uppercase) for apg<N>_dut_list.        [V]
 # NB: on a standalone CAP, sync_apgx_to_wlunit/restart_wireless NORMALIZE an explicit
@@ -424,6 +468,8 @@ netctl — GT-BE98 open network manager (reimplements cfg_server/mtlancfg net co
   hide|show <bss>              hide/unhide a BSS, no outage             [safe]
   bss <bss> up|down            enable/disable a BSS                     [safe]
   bridge <bss> <br>            move a WiFi BSS to a VLAN bridge         [safe]
+  bss-create <radio> <ssid> [br]  create+up an OPEN BSS directly (no rc)[direct]
+  bss-destroy <wlX.Y>          tear down a bss-create'd BSS (no rc)      [direct]
   net-create <apg> <vid> <ssid> <psk> [--bands 2.4,5,6|all] [--apply]  create SDN WiFi VLAN
                                (--bands default 2.4,5 = 3 bands; tokens 2.4 5 5l 5h 6 all) [restart_wireless]
   net-delete <apg> [--apply]   tear down an SDN WiFi VLAN                [restart_wireless]
@@ -441,6 +487,7 @@ case "$c" in
 	scan) cmd_scan "$@";; chanspec) cmd_chanspec "$@";;
 	ssid) cmd_ssid "$@";; hide) cmd_hide "$@";; show) cmd_show "$@";;
 	bss) cmd_bss "$@";; bridge) cmd_bridge "$@";;
+	bss-create) cmd_bss_create "$@";; bss-destroy) cmd_bss_destroy "$@";;
 	net-create) cmd_net_create "$@";; net-delete) cmd_net_delete "$@";; net-edit) cmd_net_edit "$@";; commit) cmd_commit;;
 	deadman) cmd_deadman "$@";; keep) cmd_keep;; snapshot) cmd_snapshot "$@";;
 	*) usage;;

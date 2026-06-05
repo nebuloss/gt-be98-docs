@@ -7,6 +7,12 @@ metadata:
   originSessionId: 4f755f60-617e-4c80-9c5e-2f498ce1bab5
 ---
 
+> **UPDATE 2026-06-05 — the direct path is now PROVEN.** A full WiFi network (incl. WPA2)
+> can be created/configured/bridged/destroyed entirely from `wl interface_create` + `hostapd`
+> + `brctl`, with zero ASUS orchestration (no rc/restart_wireless/wlconf/cfg_server/nvram at
+> runtime). See the verified recipe in [../webui-direct-wifi.md](../webui-direct-wifi.md) and
+> the `netctl bss-create`/`bss-destroy` reference impl. This realizes the Phase B goal below.
+
 **Phase B goal (chosen 2026-06-03, after Phase A done):** make the webui's
 `save_network`/`delete_network` ACTUALLY create/apply WiFi networks (SSID+pw+VLAN+
 radios), retiring the no-op `net_apply_all()` and dead `hapd_gen.sh`.
