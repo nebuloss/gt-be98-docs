@@ -168,6 +168,22 @@ strong RSSI, expected for an AP-side scan). Caveat: a scan is a **brief off-chan
 that can momentarily blip that radio's own clients — negligible on an idle radio (e.g.
 wl2/6G), tolerable elsewhere (WiFi is fair game; SSH is on ethernet).
 
+## Client event stream — `netctl events` (TASK 6c, VERIFIED 2026-06-05)
+
+`events [bss...] [--secs N]` is an open live stream of station join/leave on the managed
+BSSes. Mechanism (RE 2026-06-05): hostapd publishes `AP-STA-CONNECTED` / `AP-STA-DISCONNECTED`
+(+ `EAPOL-4WAY-HS-COMPLETED`) on its per-BSS ctrl socket; the open client `hostapd_cli -a
+<script> -B` is the daemon that invokes `<script> <iface> <event> <mac>` for each event.
+netctl attaches one per ctrl socket (with `-r` to survive a `restart_wireless`), filters to
+the `AP-STA-*` client events, and prints `TIME EVENT IFACE MAC`. Verified live by deauthing
+a real client (`wl -i <bss> deauthenticate <mac>`): the round-trip produced
+`DISCONNECTED` then `CONNECTED` within ~3 s as the STA re-associated. Two impl notes:
+- **don't `tail -f` over a pipe**: a long-lived `tail -f`'s stdout is block-buffered and the
+  tail of it is lost when the process is killed (ssh pipe). netctl polls the log once a
+  second and `sed`s the new lines — each short-lived `sed` flushes on exit, so events show
+  reliably. [V]
+- daemons are grep-killed by the unique action-script path on exit / Ctrl-C (trap). [V]
+
 ## Channel control — `netctl chanspec set|auto` (TASK 6b.2, VERIFIED 2026-06-05)
 
 Channel is **per-radio**, not per-BSS (all four radios — wl3/2.4G, wl0+wl1/5G, wl2/6G —

@@ -150,6 +150,50 @@ cmd_chanspec(){
 	echo "[*] applied (UNCOMMITTED): ${r}_chanspec=$spec — verify with 'netctl channels', then 'netctl commit'"
 }
 
+# events [bss...] [--secs N] : live stream of client join/leave events on the managed
+# BSSes (default: all hostapd ctrl sockets). Mechanism (RE 2026-06-05): hostapd emits
+# AP-STA-CONNECTED / AP-STA-DISCONNECTED on its ctrl socket; `hostapd_cli -a <script> -B`
+# is the open daemon that runs <script> with args `<iface> <event> <mac>` per event. We
+# attach one per BSS (with -r to survive a restart_wireless) and tail a shared log.
+# Read-only — purely observational. Verified live via a transient deauth round-trip.   [V]
+cmd_events(){
+	secs=""; bsslist=""
+	while [ $# -gt 0 ]; do case "$1" in
+		--secs)   secs="$2"; shift;;
+		--secs=*) secs="${1#--secs=}";;
+		*)        bsslist="$bsslist $1";;
+	esac; shift; done
+	need hostapd_cli
+	[ -d /var/run/hostapd ] || die "no hostapd ctrl dir (/var/run/hostapd)"
+	[ -n "$bsslist" ] || bsslist=$(ls /var/run/hostapd/ 2>/dev/null | grep -E '^wl[0-3](\.[0-9]+)?$')
+	[ -n "$bsslist" ] || die "no managed BSS interfaces found"
+	act=/tmp/netctl-events.act; log=/tmp/netctl-events.log
+	cat > "$act" <<'XEOF'
+#!/bin/sh
+case "$2" in AP-STA-CONNECTED|AP-STA-DISCONNECTED|AP-STA-POSSIBLE-PSK-MISMATCH) ;; *) exit 0;; esac
+ev=${2#AP-STA-}
+printf '%s  %-13s %-7s %s\n' "$(date +%H:%M:%S 2>/dev/null || cut -d. -f1 /proc/uptime)" "$ev" "$1" "$3" >> /tmp/netctl-events.log
+XEOF
+	chmod +x "$act"; : > "$log"
+	ev_cleanup(){ for p in $(ps w 2>/dev/null | grep "[h]ostapd_cli.*netctl-events.act" | awk '{print $1}'); do kill "$p" 2>/dev/null; done; }
+	ev_cleanup   # clear any stragglers from a previous run
+	for b in $bsslist; do hostapd_cli -i "$b" -a "$act" -B -r >/dev/null 2>&1; done
+	trap 'ev_cleanup; echo; echo "(events stopped)"; exit 0' INT TERM
+	echo "events: monitoring$(echo " $bsslist" | tr '\n' ' ')${secs:+ for ${secs}s} (Ctrl-C to stop)"
+	echo "TIME      EVENT         IFACE   MAC"
+	# Poll the log instead of `tail -f`: each sed of new lines is a short-lived process
+	# that flushes on exit, so events appear reliably even through an ssh pipe (a long
+	# `tail -f` block-buffers and loses output when killed).
+	i=0; seen=0
+	while :; do
+		[ -n "$secs" ] && [ "$i" -ge "$secs" ] && break
+		new=$(wc -l < "$log" 2>/dev/null); new=${new:-0}
+		[ "$new" -gt "$seen" ] && { sed -n "$((seen+1)),${new}p" "$log"; seen=$new; }
+		sleep 1; i=$((i+1))
+	done
+	ev_cleanup
+}
+
 # net-list : parse sdn_rl + apg<N> into a network table.                          [V]
 cmd_net_list(){
 	echo "$(nvram get sdn_rl)" | tr '<' '\n' | while IFS='>' read -r idx type en vlanx subx apgx _; do
@@ -371,6 +415,7 @@ netctl — GT-BE98 open network manager (reimplements cfg_server/mtlancfg net co
   net-list                     list SDN networks                       [safe]
   vlan-list                    VLAN bridges + BSS/fronthaul/eth members [safe]
   clients [bss]                associated stations (+rssi/rate)         [safe]
+  events [bss...] [--secs N]   live client join/leave event stream      [safe]
   channels                     per-radio chanspec + ACS exclusions      [safe]
   scan <radio>                 site survey on one radio (neighbors+chans)[brief blip]
   chanspec set <radio> <spec> [--apply]   fix a radio's channel        [restart_wireless]
@@ -392,7 +437,7 @@ EOF
 
 c="${1:-}"; shift 2>/dev/null || true
 case "$c" in
-	status) cmd_status;; net-list) cmd_net_list;; vlan-list) cmd_vlan_list;; clients) cmd_clients "$@";; channels) cmd_channels;;
+	status) cmd_status;; net-list) cmd_net_list;; vlan-list) cmd_vlan_list;; clients) cmd_clients "$@";; events) cmd_events "$@";; channels) cmd_channels;;
 	scan) cmd_scan "$@";; chanspec) cmd_chanspec "$@";;
 	ssid) cmd_ssid "$@";; hide) cmd_hide "$@";; show) cmd_show "$@";;
 	bss) cmd_bss "$@";; bridge) cmd_bridge "$@";;

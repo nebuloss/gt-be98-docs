@@ -16,6 +16,7 @@ Runs **on the router** (`/bin/sh /jffs/netctl.sh <cmd>`). It sets
 | `net-list` | list SDN networks from `sdn_rl`+`apg<N>` | safe [V] |
 | `vlan-list` | VLAN bridges + BSS/fronthaul/eth members | safe [V] |
 | `clients [bss]` | associated stations (+signal/rate via hostapd_cli) | safe [V] |
+| `events [bss...] [--secs N]` | live client join/leave event stream | safe [V] |
 | `channels` | per-radio chanspec + ACS exclusions | safe [V] |
 | `scan <radio>` | site survey: neighbor BSS table + channel occupancy | brief blip [V] |
 | `chanspec set <radio> <spec> [--apply]` | fix a radio's operating channel | restart_wireless [V] |
