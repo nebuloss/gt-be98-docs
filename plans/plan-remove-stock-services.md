@@ -29,6 +29,11 @@ Any daemon outside this list is a **removal target**.
 
 ## 2. Disposition per service (verified live)
 
+> **Stage-1 per-daemon verdicts + gate patches 0029/0030** (wlc_nt, amas_lanctrl,
+> amas_portstatus, amas_lldpd/lldpd, bsd, roamast — all live kill-tested) are in
+> [stock-services-disposition.md](stock-services-disposition.md). `amas_ssd_cd` is retired
+> transitively by 0027 (via `start_conn_diag`).
+
 | Service | Role | Method | Phase |
 |---|---|---|---|
 | `httpd` (:80) | **Asus web UI** | http_enable=0 already (httpds off); the :80 daemon remains → source patch + socat on :80 | 2/4 |
