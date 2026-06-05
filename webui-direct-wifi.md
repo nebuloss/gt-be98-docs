@@ -85,6 +85,79 @@ brctl addif br40 wl3.7               # holds; eth side via eth0.40.. (8021q) as 
 `wl -i wl3.7 interface_remove` deletes the runtime-created vif cleanly (netdev gone, slot
 freed). For a *pre-created* slot, just `bss down` + clear SSID (don't remove it).
 
+## Security recipes — verified direct (WPA2 / WPA3-SAE / transition) [V]
+
+> **VERIFIED LIVE 2026-06-05** on a disposable 6 GHz vif (`wl2.2`, runtime-created), a
+> separate per-BSS `hostapd -B` coexisting with the radio's primary hostapd — siblings
+> (`wl2.1`/test) never blipped. The driver-level AKM is read back with `wl -i <bss> wpa_auth`
+> (definitive proof the BSS advertises that key-mgmt), and beaconing with `txbcnfrm`.
+
+The create chain is identical for every security mode — only the hostapd conf differs:
+`wl interface_create ap` → write conf → `hostapd -B -t -f log conf` → (optional `brctl addif`).
+Match `channel=` to the radio's current channel so hostapd does **no PHY retune** (6 GHz:
+`hw_mode=a channel=<N>` where the radio's `6gN/160` → `channel=N`; e.g. `6g1` → `channel=1`,
+RF freq 5955 MHz = 5950 + 5·N). This build's hostapd is **v2.10**; it accepts `ieee80211be=1`
+but **rejects `ieee80211ax`** (omit it — HE/EHT are negotiated by the driver regardless).
+
+**`wl wpa_auth` AKM bit decode (observed live):**
+
+| `wpa_auth` | meaning |
+|---|---|
+| `0x80` | WPA2-PSK |
+| `0x40000` | SAE (WPA3-Personal) |
+| `0x40080` | WPA2-PSK **+** SAE (WPA2/WPA3 transition) |
+| `0x0` | open / not-yet-applied (or hostapd failed to bind — see gotchas) |
+
+`wsec=68` (`0x44` = CCMP `0x04` + MFP/group-mgmt `0x40`) accompanies an MFP-protected BSS.
+
+### WPA3-SAE (WPA3-Personal) — the 6 GHz mode [V]
+```
+wpa=2
+wpa_key_mgmt=SAE
+rsn_pairwise=CCMP
+sae_password=re-saetest123          # or wpa_passphrase=...
+ieee80211w=2                        # MFP required for SAE
+sae_require_mfp=1
+sae_pwe=2                           # 0=loop 1=H2E 2=both (6 GHz wants H2E)
+```
+Result: `state=ENABLED`, `wl wpa_auth=0x40000 SAE`, `wsec=68`, `freq=5955` (6g ch1),
+`txbcnfrm` +10/s. `hostapd_cli -i <bss> status` reports `key_mgmt[0]=SAE`.
+
+### WPA2/WPA3 transition (mixed) [V]
+```
+wpa=2
+wpa_key_mgmt=WPA-PSK SAE
+rsn_pairwise=CCMP
+wpa_passphrase=re-transit123
+ieee80211w=1                        # 1=optional so legacy WPA2-PSK clients still join
+sae_pwe=2
+```
+Result: `wl wpa_auth=0x40080` (both AKMs in the RSN IE), beaconing. Verified on **5 GHz
+(`wl1`)** and **6 GHz (`wl2`)**.
+
+### Notable finding — this driver does NOT enforce the 6 GHz "SAE-only" rule [V]
+The 802.11 spec forbids WPA2-PSK on 6 GHz (SAE+MFP only). On this BCM6813/impl105 build,
+hostapd **accepts** `WPA-PSK SAE` on a 6 GHz vif and the driver reports `wpa_auth=0x40080`
+(WPA2-PSK present) — it reached `AP-ENABLED` and beaconed. So the *authenticator* will offer
+WPA2-PSK on 6 GHz; spec-compliant 6 GHz **clients** will still refuse the PSK AKM and use SAE.
+For correctness, keep 6 GHz on pure `SAE` (`netctl net-create` already writes `<96>sae>` for
+the 6 GHz band). WPA2-only (`wpa_key_mgmt=WPA-PSK`, no SAE) is for 2.4/5 GHz.
+
+### On-box client testing is NOT possible — authenticator-side is the proof [V]
+The router ships **`wpa_supplicant v0.6.10`** whose only drivers are `wired`/`roboswitch`
+(the WAN 802.1X supplicant) — **no `nl80211`, no SAE/WPA2 WiFi station support**. A full
+over-the-air 4-way/SAE handshake cannot be driven on-box (and an on-box STA vif shares its
+radio's channel, so it can't independently tune to a test AP either). The verified proof is
+therefore the **authenticator side**: `wl wpa_auth` AKM + `hostapd_cli status key_mgmt` +
+beaconing. A real client (phone/laptop) is the end-to-end check.
+
+### Gotchas learned the hard way
+- **`kill` (SIGTERM) a per-BSS hostapd may not release the iface promptly**; the next
+  `hostapd -B` on the same vif then fails with `Unable to setup interface` and the BSS shows
+  `wpa_auth=0x0`. Use **`kill -9`**, `rm` the conf, and confirm no stray `hostapd .*re-` proc
+  before relaunching. A leftover hostapd still owning `/var/run/hostapd/<bss>` is the cause.
+- Always tear down in order: `kill -9 hostapd` → `wl bss down` → `brctl delif` → `interface_remove`.
+
 ## End-to-end, what webui calls (and what it never calls)
 
 ```
