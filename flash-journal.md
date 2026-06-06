@@ -339,3 +339,45 @@ breadcrumbs once the fleet is on br-0034+.
 Outage accounting: user nets down from 01:07 until the next power event —
 the one §3-class miss of this run; the prevention (v2 flag placement +
 smaller batches) is committed.
+
+### MAJOR CORRECTION (2026-06-06 ~09:30, after operator restored mgmt-path firewall rule)
+
+**The harness worked perfectly; the "2-hour dark incident" was a
+management-path visibility artifact.** Ground truth recovered over SSH at
+the device's NEW address 10.0.0.95:
+
+1. The br-0033 trial boot was slow/network-broken but DID reach
+   services-start: the dead-man **ARMED, FIRED at +300s, repaired the
+   commit (`wr_metadata: committed 1`) and its `reboot` WORKED**
+   (log 00:11:14, device clock).
+2. The device booted **br-0032 (slot 1) at ~01:13 and ran it healthily ever
+   since** (uptime 8.4 h at verification; radios + all 3 user-net hostapds
+   up). **User-network outage was only the ~11-min trial cycle**, not hours.
+3. What was actually broken: the **monitoring vantage**. This build host
+   sits on VLAN 50 (10.0.50.0/24) and reaches the AP routed; after the
+   trial cycle the AP took a NEW DHCP lease (10.0.0.95 instead of 10.0.0.8)
+   and the inter-VLAN firewall only allowed the old address — every probe
+   (SSH/ping/port-scan) failed while same-subnet clients (operator webUI)
+   were fine. The operator's firewall-rule update restored visibility.
+4. The earlier "userspace wedge with no reset source" taxonomy entry is
+   therefore WRONG for this event (the v2 /data-flag + breadcrumb hardening
+   remains valuable and stays). The "incident closure" entry above is
+   superseded by this correction.
+
+**Recovery/cleanup executed (no reboot needed):**
+- Gate on running br-0032 @10.0.0.95: **20/20 PASS** (incl. identity).
+- Slot 2 neutralized: br-0032 artifact (`6c3b8918…`) flashed over the
+  broken br-0033 (hnd-write exit 99, auto-commit → repaired `+1`).
+- All trial flags removed. Final metadata: booted=1=committed,
+  valid 1,2, seq 23,24, reset_reason=0x34. Both slots now carry
+  gate-validated br-0032 content.
+- Harness scripts parameterized (`GT_BE98_DEV`/`GT_BE98_PORT`) — the AP's
+  management address is currently **10.0.0.95** (DHCP; reservation for
+  10.0.0.8 apparently not honored after the lease churn — operator to fix
+  or adopt).
+
+**M4 status:** br-0033's root cause (slow boot + broken LAN/route on the
+22-removal image) still needs isolating — resume in ≤5-file slices on a
+br-0034 baseline (v2 harness with /data dead-man + S27 breadcrumbs), which
+will capture forensics if any slice misbehaves. Reboot budget for the day
+is spent; next trial in a future session.
