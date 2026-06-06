@@ -521,3 +521,25 @@ br-0034/0035/0036) — slices 3-5 next session; slice 3 will be prebuilt
   rc-symlinks), slice 5 (bsd/roamast).
 - Session-end state: br-0036 committed on slot 2 (gate 20/20), slot 1 =
   br-0035 fallback, no armed flags, reset_reason 0x34, factory MAC intact.
+
+---
+
+## 2026-06-06 12:23–12:38 — FLASH #9 (M4 slice 3): br-0037 → slot 1 — GATE 20/20, COMMITTED
+
+- Operator override: "go ahead" given after the budget-3/3 report — daily
+  trial-cycle cap explicitly waived for the M4 backlog; cadence continues
+  same-day (each cycle ≈3 min outage).
+- Image: prebuilt `GT-BE98_br-0037_nand_squashfs.pkgtb` `534b002b…60a4`
+  = br-0036 − cfg_server/wlc_nt/lldpd (AiMesh/cfg core). Diff proof was
+  exact (3 REMOVED + marker).
+- Trial nominal (ONCE 7/7): flash slot 1 → repair `+2` → ONCE → reboot
+  12:23 → booted slot 1; dead-man ARMED (sha ok) → auto-DISARMED T+5s.
+- **Gate: 20/20 PASS** (identity `br-0037+g63ac6b7234c2`, 3-min soak).
+- **Slice gate PASS**: 3 targets absent, slices 1+2 removals still absent,
+  no matching processes, no exec spam, webui alive.
+- Cleanup: flag removed; **committed=1=booted**, valid 1,2, seq 27,26.
+  Slot 2 = br-0036 fallback.
+
+**Bisect datum 3: cfg ecosystem (cfg_server/wlc_nt/lldpd) is NOT the
+br-0033 culprit.** Remaining: amas rc-symlinks (slice 4), bsd/roamast
+(slice 5), banned envrams wrapper (prime suspect).
