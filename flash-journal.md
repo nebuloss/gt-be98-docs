@@ -718,3 +718,41 @@ evidence-based.
 **M5 candidate 2 (busybox-owned-by-Buildroot) DONE.** Next: openssl CLI
 (candidate 3), then lighttpd/webui-go (own session — needs admin-path
 validation).
+
+---
+
+## 2026-06-06 14:35–14:50 — FLASH #15 (M5 candidate 3): br-0043 → slot 1 — GATE 20/20, COMMITTED — openssl CLI
+
+- Image: `GT-BE98_br-0043_nand_squashfs.pkgtb` `44eb9a01…01fe` = br-0042 +
+  openssl 3.6.2 static CLI (5.7 MB) at `/usr/br/bin/openssl` +
+  `/usr/br/etc/ssl/openssl.cnf` (+certs/private dirs). Diff proof exact
+  (4 ADDED under /usr/br + marker). Tree `a7eb0835c60e`.
+- De-risk pattern caught a real defect pre-flash: first build's default
+  OPENSSLDIR `/usr/local/ssl` made `req` fail on-device → rebuilt with
+  `--openssldir=/usr/br/etc/ssl` and shipped the stock config;
+  genpkey/req -x509/verify/dgst/s_client all validated live from /tmp.
+- Trial nominal (ONCE 13/13): slot 1 → ONCE → reboot 14:35 → booted
+  slot 1; dead-man ARMED (sha ok) → auto-DISARMED T+5s.
+- **Gate: 20/20 PASS** (identity `br-0043+ga7eb0835c60e`, soak). Slice
+  gate: image openssl generates/verifies certs with its shipped config;
+  dropbear :2223 + busybox still good; webui alive.
+- Cleanup: flag removed; **committed=1=booted**, valid 1,2, seq 33,32.
+  Slot 2 = br-0042 fallback.
+
+**M5 candidate 3 (openssl CLI) DONE.** Remaining M5: lighttpd/webui-go
+serving (own session — admin-path validation required first).
+
+## 2026-06-06 ~14:55 — repos pushed to GitHub (operator request); patch-0032 addendum
+
+- `gt-be98-buildroot` master pushed (f604672..a7eb083 + br-0043 commit).
+- `gt-be98-docs`: remote had operator commit `ba5c55e` (patch-0032 plan —
+  envrams real-start RE + blob-level wrapper gate, build-validated, NOT
+  flashed). Rebased our 18 session commits on top, pushed.
+- **Read patch-0032 against today's bisect conclusion: the br-0033 wrapper
+  was a verbatim mirror of the 0032 design.** Hardware evidence (br-0040 ≡
+  batch-1 minus wrapper boots clean) ⇒ the gated-off wrapper itself caused
+  the br-0033 boot failure + BSP-MAC nvram poisoning on a NORMAL boot.
+  Wrote an evidence ADDENDUM into the plan doc: do NOT flash
+  artifacts-0032 as-is; options (early-boot allowance / keep kill+firewall
+  stance / neutralize the BSP-fallback writer) + mandatory MAC checks in
+  any retest gate. Operator decision pending.

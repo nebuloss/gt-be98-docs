@@ -158,3 +158,44 @@ Retour à l'état gaté : `nvram unset envrams_enable; nvram commit` puis
     `b3467b88bec667fd57991216d8a5dde2ac99c9d3a80fb88deb3cd8d12ef4dc66`
   - `GT-BE98_3006_102.6_0_nand_squashfs_loader.pkgtb`
     `f6f044bcdb0615352b47eb020a20c74d97ccc41433f313785855406b2e0571a6`
+
+---
+
+## ⚠️ ADDENDUM — hardware evidence against flashing 0032 as-is (2026-06-06, M4 bisect)
+
+The br-0033 trial (2026-06-06 01:07) carried **exactly this wrapper+rename**
+(`m4-staging/envrams-wrapper` is a verbatim mirror of the 0032 design,
+applied to the 0031 rootfs via the Buildroot transform) alongside 22 file
+removals. The trial boot was slow/network-broken AND **committed the
+Broadcom BSP default base MAC (20:cf:30:00:00:00) into nvram**
+(et0macaddr/label_mac/lan_hwaddr), surviving rollback and breaking the
+DHCP reservation.
+
+The M4 bisect (br-0035..br-0040, six trials, each gate 20/20) has now
+cleared **every other ingredient** of that batch, individually and
+cumulatively: br-0040 ≡ br-0033 minus only the wrapper, and it boots clean
+with factory MACs intact. **By elimination, the gated-off wrapper caused
+both symptoms on a NORMAL (non-mfg) boot.**
+
+Consequence for this plan: the side effect accepted in "Effets de bord
+acceptés" ("le code asusctrl ... ne pourra plus lire les variables envram
+... échoue proprement") is **not benign on this board**: when
+`init_asusctrl`'s envram read fails, the MAC-derivation path falls back to
+the BSP default and **persists it via nvram commit** — observed on
+hardware, not theoretical. Note nvram already held the factory
+et0macaddr before br-0033 and was still overwritten: pre-seeding nvram
+does NOT protect.
+
+Recommendation: do NOT flash the artifacts-0032 pkgtb until the gate
+design also covers the boot-time MAC path. Options to evaluate:
+1. Wrapper allows envrams during early boot (e.g. uptime < 120 s or
+   until a marker file), gates afterwards — preserves init_asusctrl's
+   envram reads, still blocks steady-state/webui-triggered respawns.
+2. Keep the current adopted stance (daemon runs; kill+firewall TCP 5152
+   post-boot) — zero boot risk, envrams exposed only during boot.
+3. Find/neutralize the BSP-fallback writer (asus_ctrl_envram_write /
+   deconfig_nvram_envram in ate-broadcom.o) — prebuilt, likely
+   un-patchable in text, same constraint as the start sites.
+Any retest of a gated envrams MUST go through the v2 trial harness
+(breadcrumbs + /data dead-man) with an nvram MAC backup staged, and check
+`nvram get et0macaddr` + br0 MAC in the slice gate BEFORE adopting.
