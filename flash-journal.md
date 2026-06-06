@@ -986,3 +986,56 @@ agent key persisted throughout; NO `service restart_*` run.
 **Unblocks:** flash-free beta file pushes via
 `scp -P 2223 <file> admin@<ip>:/jffs/…` — the transport the webui-go beta
 workflow needs once webui-go gains a `-no-apply`/`-test` mode.
+
+---
+
+## 2026-06-06 NIGHT-5 — br-0047 (monitor-retire #1: netool/rtkmonitor/sysstate/wlc_monitor) — PASS, COMMITTED
+
+**Image:** `GT-BE98_br-0047_nand_squashfs.pkgtb`, sha256
+`cd3e7f1edd8f1876b7384107b9edb6c411dbae83fceba43196302092544dbf16`, 83301064 B.
+Release marker `br-0047+g506ef6f96b74`. Slot 2 (trial), good slot 1 = br-0045.
+
+**What it is:** the Phase-2 rc-drain monitor-retire #1 slice — removes 4 stock
+monitor daemons, everything else byte-identical to br-0046: `/sbin/netool` +
+`/sbin/rtkmonitor` (rc MULTICALL symlinks), `/usr/sbin/sysstate` (42864 B) +
+`/usr/sbin/wlc_monitor` (9780 B) (real bins). Recovers one 128K squashfs block.
+
+**Slot-1-hop required first:** the device was running slot 2 (br-0046) at trial
+start, so slot 2 was unflashable. A prior agent hopped it to slot 1 (br-0045,
+committed 1 valid 1,2 seq 35,36) so slot 2 became the idle/flashable trial slot.
+Standard slot-2-trial / GOOD=slot-1 pattern then applied.
+
+**Trial (proven harness):** `trial-flash.sh --window 600` from slot 1. Pre-check:
+good=1 booted=1 committed=1 valid 1,2 RR 34. dead-man armed (TRIAL_SLOT=2
+GOOD_SLOT=1 WINDOW=600 SHA=cd3e7f1e…, exact parser format, read-back verified)
+→ hnd-write slot 2 (exit 99, auto-commit 2) → commit repaired to slot 1 →
+ONCE (`bcm_bootstate 3`, RR→1) → plain `reboot`. SSH answered on slot 2 at +107s;
+a poll-loop touched `/tmp/deadman-disarm` → dead-man logged **DISARMED at T+5s**.
+ASUS init self-committed slot 2.
+
+**Gate 19/19 PASS** (slot==2, identity `br-0047+g506ef6f96b74`, 4 radios up,
+Ramondia/Pagoa/DEV-SCEP present, 11 hostapd, br0 IP, jffs rw,
+eapd/wlceventd/mcpd/watchdog up, boot_failed_count=0, dmesg clean, 3-min
+daemon-pid soak stable) — identical to the br-0046 baseline.
+
+**WIFI SLICE CHECK — IDENTICAL to the pre-trial br-0046 baseline (the decisive
+proof, esp. the wlc_monitor wifi-adjacency caveat):**
+- wl0-3 isup all =1; `brctl show` br0/br20/br30/br50/br70 memberships
+  byte-identical to baseline.
+- 11 hostapd (4 stock `/tmp/wlX_hapd.conf` + 7 webui `/tmp/webui-hapd/*`), same
+  BSS set; 7 named BSSes all state=ENABLED — Ramondia (wl0.1/wl1.1/wl3.2),
+  DEV-SCEP (wl0.2/wl1.2/wl3.5), Pagoa (wl3.3); 4 stock primaries ENABLED.
+- The 4 monitor binaries + processes ABSENT (intended).
+- **10-min syslog+breadcrumb soak: syslog grew 1 line, ZERO matches for
+  netool/rtkmonitor/sysstate/wlc_monitor / respawn / watchdog-restart.** The
+  `blog_get_dstentry_by_id … match fails` breadcrumb lines are benign Broadcom
+  fcache/blog flow-accel noise (present on the baseline board, unrelated to the
+  removed daemons). Radios + 7 BSSes re-verified once more after the soak —
+  still all up/ENABLED.
+- **wlc_monitor removal did NOT degrade wifi → stays RETIRED (no move to KEEP).**
+
+**ACCEPTED.** `rm /data/.trial-armed` (init had already self-committed slot 2).
+Final metadata: **committed 2 valid 1,2 seq 35,36, Booted Second,
+reset_reason 34, boot_failed_count 0.** br-0047 = committed baseline; br-0045
+stays valid on slot 1 as fallback. nvram agent key persisted throughout; NO
+`service restart_*` run.
