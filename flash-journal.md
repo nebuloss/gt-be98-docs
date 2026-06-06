@@ -1039,3 +1039,78 @@ Final metadata: **committed 2 valid 1,2 seq 35,36, Booted Second,
 reset_reason 34, boot_failed_count 0.** br-0047 = committed baseline; br-0045
 stays valid on slot 1 as fallback. nvram agent key persisted throughout; NO
 `service restart_*` run.
+
+---
+
+## 2026-06-06 NIGHT-6 — br-0048 (wanduck + USB-crew retire: wanduck/disk_monitor/usbmuxd) — PASS, COMMITTED
+
+**Image:** `GT-BE98_br-0048_nand_squashfs.pkgtb`, sha256
+`8b266ac453ac6b61a52141b2872c5af74d839ee4ac410916471a94ec3b1113b0`, 83223240 B.
+Release marker `br-0048+g7720c07c1d92`. Slot 2 (trial), good slot 1 = br-0045.
+
+**What it is:** the Phase-2 rc-drain **P2-3** slice and the **LAST pure-removal
+(Pattern-B) slice** in Phase 2 — removes 3 more paths cumulatively on top of
+br-0047 (cumulative slice 8, 29 paths), everything else byte-identical to
+br-0047: `/sbin/wanduck` + `/sbin/disk_monitor` (rc MULTICALL symlinks `-> rc`),
+`/usr/bin/usbmuxd` (real bin, 211744 B in 0031). Recovers ~76 KB.
+
+**Pre-flight gate + live kill-tests (on the br-0047 baseline, dead-man-guarded):**
+`nvram set wanduck_down=1; nvram commit` (the stock `no_need_to_start_wanduck()`
+gate covers BOTH starter AND watchdog respawn — services.c / watchdog.c). Then:
+`killall wanduck` → NO respawn over 2 watchdog periods (70 s), port :18017
+CLOSED, zero syslog respawn (gate held); `killall disk_monitor` → NO respawn
+over 70 s (only a pre-existing event-driven `ntpd_synced → notify_rc
+restart_diskmon`, one-shot, not a loop); `usbmuxd` already absent. Only :18017
+was ever listening on this AP (never :18018). All three SAFE to remove.
+
+**Build + diff-proof GREEN.** `make` → rootfs.squashfs 67M / pkgtb 80M; transform
+removed all 29 cumulative paths (typo-guard passed). `rootfs-diff` (host
+unsquashfs) br-0047 vs br-0048: content deltas EXACTLY = release stamp (CHANGED)
++ `/usr/bin/usbmuxd` (REMOVED) + `wanduck`/`disk_monitor` symlinks (REMOVED,
+listing-only); www/swanctl/parent-dir size deltas are benign directory-metadata
+wobbles (ZERO content delta — same class as br-0047); /usr/br island
+byte-identical. rootfs 69,971,968 → 69,894,144 B = 77,824 B recovered;
+slot-2 headroom ≈ 1.2 MB.
+
+**Slot-1-hop first:** device was on slot 2 (br-0047, committed 2) → slot 2
+unflashable. `bcm_bootstate +1` (committed 1 verified) → reboot → booted slot 1
+(br-0045, cmdline 0,4, booted==committed=1, stable normal boot — sync_boot_state
+does NOT re-commit a normal boot even with slot 2 at higher seq).
+
+**Trial (proven harness):** `trial-flash.sh --window 600` (no `--reboot`) from
+slot 1. Pre-check good=1 booted=1 committed=1 valid 1,2 RR 34. dead-man armed
+(TRIAL_SLOT=2 GOOD_SLOT=1 WINDOW=600 SHA=8b266ac4…, read-back verified) →
+hnd-write slot 2 (exit 99, auto-commit 2) → commit repaired to slot 1 → ONCE
+(`bcm_bootstate 3`, RR→1) → plain `reboot`. SSH answered on slot 2 at ~+126 s;
+an auto-disarm poll touched `/tmp/deadman-disarm` → dead-man (in
+`/data/trial-deadman.log`) logged **ARMED on trial slot 2 (sha=8b266ac4
+window=600) → DISARMED at T+15s**. ASUS init self-committed slot 2.
+
+**Gate 19/0 PASS** (slot==2, identity `br-0048+g7720c07c1d92`, 4 radios up,
+Ramondia/Pagoa/DEV-SCEP present, 11 hostapd, br0 IP, jffs rw,
+eapd/wlceventd/mcpd/watchdog up, boot_failed_count=0, dmesg clean, 3-min
+daemon-pid soak stable) — identical to the br-0047 baseline.
+
+**SLICE CHECKS — all PASS:**
+- The 3 binaries ABSENT (`/sbin/wanduck`, `/sbin/disk_monitor`,
+  `/usr/bin/usbmuxd`); no wanduck/disk_monitor/usbmuxd processes; ports
+  :18017/:18018 CLOSED; `nvram get wanduck_down`=1 (persists in nvram).
+- **WIFI IDENTICAL to the pre-trial br-0047 baseline** (no collateral damage):
+  wl0-3 isup all =1; `brctl show` br0/br20/br30/br50/br70 byte-identical; 11
+  hostapd (4 stock `/tmp/wlX_hapd.conf` + 7 webui `/tmp/webui-hapd/*`); 7 named
+  BSSes all state=ENABLED — Ramondia (wl0.1/wl1.1/wl3.2), DEV-SCEP
+  (wl0.2/wl1.2/wl3.5), Pagoa (wl3.3); 4 stock primaries ENABLED. Normalized diff
+  vs the br-0047 capture = IDENTICAL (only volatile hostapd pids differ).
+- **10-min syslog soak: ZERO respawn / watchdog-restart / exec-fail matches**
+  for the removed daemons (syslog grew only benign dropbear-auth lines); the
+  feared `restart_diskmon` exec-fail never recurred. committed 2 stable.
+
+**ACCEPTED.** `rm /data/.trial-armed` (init had already self-committed slot 2).
+Final metadata: **committed 2 valid 1,2 seq 35,36, Booted Second,
+reset_reason 34, boot_failed_count 0.** br-0048 = committed baseline; br-0045
+stays valid on slot 1 as fallback. `wanduck_down=1` remains committed in device
+nvram. nvram agent key persisted throughout; NO `service restart_*` run.
+
+**Phase-2 Pattern-B campaign COMPLETE.** Remaining RETIRE = {sched_daemon}
+(UNGATED watchdog respawn → needs new merlin blob 0034 gate, Phase-2b, br-0049);
+DRAIN {httpd, dnsmasq} need the 0033 blob / rails (Phase-2b/2c).
