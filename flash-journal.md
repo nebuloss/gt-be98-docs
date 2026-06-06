@@ -381,3 +381,32 @@ the device's NEW address 10.0.0.95:
 br-0034 baseline (v2 harness with /data dead-man + S27 breadcrumbs), which
 will capture forensics if any slice misbehaves. Reboot budget for the day
 is spent; next trial in a future session.
+
+---
+
+## 2026-06-06 ~09:45 — MAC poisoning found & repaired (br-0033 collateral, operator-reported)
+
+Operator reported the router's MAC had changed (hence the DHCP reservation
+miss). Verified: br0/eth0 ran with the **Broadcom BSP default base MAC
+`20:cf:30:00:00:00`** and nvram held it in `et0macaddr`, `label_mac`,
+`lan_hwaddr` (committed — survived the rollback; nvram is shared between
+slots). Factory MAC intact in CFEROM `BaseMacAddr` (60:CF:84:38:87:B0) and
+in the 2026-06-05 nvram backup; `wan0_hwaddr` untouched; no kernel-nvram
+file on /data involved.
+
+**Mechanism:** during the br-0033 boot the MAC-derivation path failed —
+prime suspect the **envrams wrapper** (envram server neutered ⇒ `envram get
+et0macaddr` empty ⇒ BSP fallback per the hndmfg.sh logic family) — and the
+fallback got persisted via `nvram commit`. This also explains the new DHCP
+lease and likely contributes to the "slow/broken network" symptom of the
+br-0033 trial itself.
+
+**Repair (full-autonomy mandate):** restored the three vars to
+`60:CF:84:38:87:B0` from the baseline backup, `nvram commit` (exact
+baseline restore, not experimental), rebooted 09:57. Consequences:
+envrams wrapper BANNED from future M4 slices (see
+`gt-be98-buildroot/board/gt-be98/m4-staging/README.md`); envrams
+retirement stays kill+firewall-based (webui already does this).
+
+Operator directives recorded: full autonomy, never ask questions; nmap
+installed on the build host for AP discovery after lease churn.
