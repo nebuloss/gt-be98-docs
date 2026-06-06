@@ -565,3 +565,23 @@ Remaining from batch-1: bsd/roamast (slice 5). If slice 5 also passes, the
 br-0033 culprit is **the envrams wrapper+rename by elimination** (already
 the prime suspect from the MAC-poisoning mechanism; stays banned, no
 re-test by re-application).
+
+---
+
+## 2026-06-06 12:52–13:07 — FLASH #11 (M4 slice 5): br-0039 → slot 1 — GATE 20/20, COMMITTED
+
+- Image: `GT-BE98_br-0039_nand_squashfs.pkgtb` `47016257…a8eb` = br-0038 −
+  `/usr/sbin/bsd` + `/sbin/roamast` (→rc symlink). Diff proof exact.
+  Tree `3af3d12de61b`.
+- Trial nominal (ONCE 9/9): slot 1 → repair `+2` → ONCE → reboot 12:52 →
+  booted slot 1; dead-man ARMED (sha ok) → auto-DISARMED T+5s.
+- **Gate: 20/20 PASS** (identity `br-0039+g3af3d12de61b`, soak).
+- **Slice gate PASS**: both absent, all 15 earlier removals still absent,
+  no respawn/spam, webui alive.
+- Cleanup: flag removed; **committed=1=booted**, valid 1,2, seq 29,28.
+  Slot 2 = br-0038 fallback.
+
+**Bisect datum 5: bsd/roamast are NOT the br-0033 culprit. All five
+binary-removal groups of batch-1 now individually cleared.** Slice 6
+(re_mode-only amas crew) runs next for full batch-1 parity; after that the
+only untested br-0033 ingredient is the envrams wrapper+rename.
