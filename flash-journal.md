@@ -473,3 +473,51 @@ the (banned) envrams wrapper, still the prime suspect.
 br-0034 (gate 20/20) fallback.** Trial-cycle budget note: this is the 2nd
 cycle today (br-0034 was the 1st); midday slot chosen deliberately under
 the full-autonomy mandate — outage ≈ 3 min, justified by slice cadence.
+
+---
+
+## 2026-06-06 11:59–12:14 — FLASH #8 (M4 slice 2): br-0036 → slot 2 — GATE 20/20, COMMITTED
+
+- Image: `GT-BE98_br-0036_nand_squashfs.pkgtb` sha256 `e8ec5f34…e84c`
+  (archived). Content = br-0035 − slice 2: `/usr/sbin/networkmap`,
+  `/usr/networkmap/` (4 data files), `/usr/sbin/uamsrv` (lighttpd symlink).
+  Tree `70e549c6aedc`.
+- **Pipeline lesson (caught by the mandatory diff proof, no flash harmed):**
+  `rootfs-remove.list` must be CUMULATIVE — the transform unpacks the
+  pristine 0031 blob every build, so the first br-0036 build (slice-2-only
+  list) silently RE-ADDED the five slice-1 removals. rootfs-diff vs the
+  br-0035 rootfs showed them as ADDED; list fixed to cumulative
+  (slice 1 + slice 2), commit amended, rebuilt. Final diff proof exact:
+  5 REMOVED + uamsrv symlink + marker CHANGED, 0 ADDED.
+- Trial nominal (ONCE 6/6): flash slot 2 (auto-commit → repaired `+1`) →
+  ONCE → reboot 11:59 → booted slot 2. Dead-man ARMED (correct sha) →
+  auto-DISARMED T+5s. Breadcrumbs logging.
+- **Gate: 20/20 PASS** (identity `br-0036+g70e549c6aedc`, 3-min soak).
+- **Slice gate PASS**: slice-2 targets absent, slice-1 removals still absent
+  (cumulative list verified on-device), no matching processes, no
+  exec-failure spam, webui alive, `/usr/sbin/lighttpd` real binary intact.
+- Cleanup: flag removed; **committed=2=booted**, valid 1,2, seq 25,26,
+  reset_reason 0x34. Slot 1 = br-0035 fallback.
+
+**Bisect datum 2: networkmap/uamsrv are NOT the br-0033 culprit.**
+Remaining suspects: cfg_server/wlc_nt/lldpd (slice 3), amas symlinks
+(slice 4), bsd/roamast (slice 5), and the banned envrams wrapper (prime).
+
+**Device baseline: br-0036 on slot 2. Cumulative strip so far: 8 paths
+(~1.7 MB unpacked).** Trial budget 2026-06-06 EXHAUSTED (3 cycles:
+br-0034/0035/0036) — slices 3-5 next session; slice 3 will be prebuilt
++ diff-proven offline.
+
+---
+
+## 2026-06-06 12:20 — M4 slice 3 (br-0037) PREBUILT + DIFF-PROVEN, trial deferred
+
+- `GT-BE98_br-0037_nand_squashfs.pkgtb` sha256 `534b002b…60a4` (archived) =
+  br-0036 − cfg_server/wlc_nt/lldpd. Tree `63ac6b7234c2` (clean).
+  Diff proof vs br-0036 rootfs: exactly 3 REMOVED + marker, 0 ADDED.
+- NOT flashed: 2026-06-06 trial budget exhausted (3/3). Next session:
+  trial br-0037 (expect ONCE → slot 1), slice gate must additionally check
+  cfg_server/wlc_nt/lldpd absent + no respawn; then slice 4 (amas
+  rc-symlinks), slice 5 (bsd/roamast).
+- Session-end state: br-0036 committed on slot 2 (gate 20/20), slot 1 =
+  br-0035 fallback, no armed flags, reset_reason 0x34, factory MAC intact.
