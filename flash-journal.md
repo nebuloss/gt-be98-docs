@@ -915,3 +915,74 @@ valid on slot 2 as fallback.
 (makes live `/dev/log` receive actually write to the logfile); (2) the nvram
 key pre-seed (lockout impossible even if a `service restart_*` slips through);
 (3) discipline: NO `service restart_*` was run during the trial.
+
+---
+
+## 2026-06-06 NIGHT-2 — br-0046 (OpenSSH sftp-server → scp/sftp on :2223) — PASS, COMMITTED
+
+**Image:** `GT-BE98_br-0046_nand_squashfs.pkgtb`, sha256
+`38d6bb28fd3a4ab2cf5ec0516ea97f1f99717593d7589acd113bd3cdb6533d6d`, 83M.
+master HEAD `258bd50`, release marker `br-0046+g258bd506576a`. Slot 2 (trial),
+good slot 1 = br-0045.
+
+> Numbering: the `br-0046` number was first used tonight by the webui-go
+> candidate that was trialed + REJECTED (guest-net regression, never
+> committed). That freed the number; this OpenSSH image — a different, safe,
+> wifi-untouching slice — reuses it and is the one that passed + committed.
+
+**What it is:** the OpenSSH slice (orig br-0048 on
+`worktree-agent-a1fa28cb3cfc39a5a`, ba73316, built off the OLD br-0045 commit
+b4c9417) rebased CLEAN onto current master (the slice's code files were
+byte-identical between its base and master, so cumulative + conflict-free; the
+br-0045 syslog substitution + busybox patch preserved). Adds
+`gt-be98-br-openssh` (OpenSSH 10.2p1, openssl 3.6.2 STATIC from the openssl
+`_brdev` install_dev tree, glibc/zlib dynamic against device libs); harvests
+`/usr/br/libexec/sftp-server` + `/usr/br/bin/{scp,sftp,ssh,ssh-keygen}`;
+rebuilds br-dropbear with the SFTP subsystem
+(`SFTPSERVER_PATH=/usr/br/libexec/sftp-server`) so the S28 :2223 dropbear
+gains scp/sftp.
+
+**Build + diff-proof GREEN.** A from-scratch openssl rebuild perturbed only the
+5-byte embedded compile-date string in `/usr/br/bin/openssl`; restored the
+br-0045 openssl binary into `apps/openssl` + re-ran the image step (same
+recipe/source) → byte-identical again. `rootfs-diff` vs the br-0045 artifact:
+content deltas EXACTLY = release stamp (CHANGED) + `/usr/br/sbin/dropbearmulti`
+(CHANGED, sftp-aware, 976588B) + the 5 OpenSSH binaries (ADDED); busybox +
+openssl byte-identical. Both harvest guards passed (static guard on
+busybox/dropbear/openssl; dynamic-linkage guard on the openssh binaries:
+interp `/lib/ld-linux.so.3`, no libcrypto/libssl in DT_NEEDED, all NEEDED
+sonames satisfiable from /lib+/usr/lib).
+
+**Trial (proven harness):** `trial-flash.sh --reboot --window 600`. Pre-check:
+committed 1 booted 1 valid 1,2 RR 34. dead-man armed (TRIAL=2 GOOD=1, sha
+38d6bb28) → hnd-write slot 2 (auto-commit) → commit repaired to slot 1 →
+ONCE (bcm_bootstate 3) → reboot. SSH answered on slot 2; a slot-2-gated
+watcher touched `/tmp/deadman-disarm` → dead-man logged **DISARMED at T+10s**.
+ASUS init self-committed slot 2.
+
+**Gate 20/20 PASS** (slot==2, identity `br-0046+g258bd506576a`, 4 radios up,
+Ramondia/Pagoa/DEV-SCEP present, 11 hostapd, br0 IP, jffs rw,
+eapd/wlceventd/mcpd/watchdog up, boot_failed_count=0, dmesg clean, 3-min
+daemon-pid soak stable). No guest-net regression — OpenSSH touches no wifi
+state (contrast the webui defect).
+
+**SCP + SFTP LIVE-VALIDATED over :2223 (the whole point):**
+- `scp -P 2223 /tmp/scp-trial-test.txt admin@10.0.0.8:/jffs/scp-trial-test.txt`
+  → exit 0; file landed; remote sha == local sha
+  (`db7c4d59…`, byte-identical). `scp -v`: `Sending subsystem: sftp` against
+  `dropbear_2025.89` — modern scp speaks sftp, dropbear advertised + accepted
+  the subsystem, the OpenSSH sftp-server was exec'd.
+- `sftp -P 2223 -b` batch (put / ls -l / ls -l / get) → exit 0; put landed
+  (sha `112dc756…` match), `ls -l` served correct listings, `get`
+  round-tripped byte-identical.
+- :2223 listener confirmed pid 303 → `/usr/br/sbin/dropbearmulti` (the new
+  from-source sftp-aware build). Test files cleaned up afterward.
+
+**ACCEPTED.** `rm /data/.trial-armed`; init self-committed slot 2. Final
+metadata: **committed 2 valid 1,2 seq 35,36, Booted Second, reset_reason 34.**
+br-0046 = committed baseline; br-0045 stays valid on slot 1 as fallback. nvram
+agent key persisted throughout; NO `service restart_*` run.
+
+**Unblocks:** flash-free beta file pushes via
+`scp -P 2223 <file> admin@<ip>:/jffs/…` — the transport the webui-go beta
+workflow needs once webui-go gains a `-no-apply`/`-test` mode.
