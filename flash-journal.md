@@ -543,3 +543,25 @@ br-0034/0035/0036) — slices 3-5 next session; slice 3 will be prebuilt
 **Bisect datum 3: cfg ecosystem (cfg_server/wlc_nt/lldpd) is NOT the
 br-0033 culprit.** Remaining: amas rc-symlinks (slice 4), bsd/roamast
 (slice 5), banned envrams wrapper (prime suspect).
+
+---
+
+## 2026-06-06 12:38–12:52 — FLASH #10 (M4 slice 4): br-0038 → slot 2 — GATE 20/20, COMMITTED
+
+- Image: `GT-BE98_br-0038_nand_squashfs.pkgtb` `8afa3f3e…4be5` = br-0037 −
+  amas rc-symlinks `/sbin/{amas_lanctrl,amas_portstatus,amas_ssd_cd,
+  conn_diag}` (all → rc; live pre-check: none running). Diff proof exact
+  (4 symlinks + marker, 0 content changes). Tree `278df1c111d4`.
+- Trial nominal (ONCE 8/8): slot 2 → repair `+1` → ONCE → reboot 12:38 →
+  booted slot 2; dead-man ARMED (sha ok) → auto-DISARMED T+5s.
+- **Gate: 20/20 PASS** (identity `br-0038+g278df1c111d4`, soak).
+- **Slice gate PASS**: 4 symlinks absent, `/sbin/rc` intact (2666744),
+  slices 1-3 removals still absent, no respawn/spam, webui alive.
+- Cleanup: flag removed; **committed=2=booted**, valid 1,2, seq 27,28.
+  Slot 1 = br-0037 fallback.
+
+**Bisect datum 4: the amas rc-symlink group is NOT the br-0033 culprit.**
+Remaining from batch-1: bsd/roamast (slice 5). If slice 5 also passes, the
+br-0033 culprit is **the envrams wrapper+rename by elimination** (already
+the prime suspect from the MAC-poisoning mechanism; stays banned, no
+re-test by re-application).
