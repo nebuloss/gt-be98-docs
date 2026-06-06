@@ -639,3 +639,35 @@ operator explicitly waived the ≤3/day cap ("go ahead" after budget
 report); user-visible outage ≈ 6 × 3 min today (slices), all gates green,
 both slots end on gate-validated images (br-0040 committed slot 2,
 br-0039 fallback slot 1).
+
+---
+
+## 2026-06-06 13:27–13:42 — FLASH #13 (M5 candidate 1): br-0041 → slot 1 — GATE 20/20, COMMITTED — modern dropbear beside rc
+
+- Image: `GT-BE98_br-0041_nand_squashfs.pkgtb` `7119b3a7…9ba6` = br-0040 +
+  3 entries: `/usr/br/sbin/dropbearmulti` (dropbear 2025.89, static ARM,
+  key-auth only — password auth compiled out, no crypt() in static glibc),
+  `/rom/etc/init.d/br-dropbear.sh` + rail link `S28br-dropbear`. Diff proof
+  exact (2 ADDED + 1 symlink + marker). Tree `dbd98b1a5fd1`.
+- **Prefix deviation from the plan, documented:** `/opt` in this rootfs is
+  a tmpfs symlink (`opt -> tmp/opt`, same pattern as /etc) — the build
+  failed cleanly on the overlay copy. The M5 prefix is realized as
+  **`/usr/br`** (real squashfs dir, ASUS never touches it).
+- **De-risked before flashing:** the binary was live-tested from /tmp on
+  br-0040 (no reboot, no persistence): runs, generates ed25519 hostkey,
+  key auth from the operator key on :2223 OK. Then staged.
+- Trial nominal (ONCE 11/11): slot 1 → repair `+2` → ONCE → reboot 13:27 →
+  booted slot 1; dead-man ARMED (sha ok) → auto-DISARMED.
+- **Gate: 20/20 PASS** (identity `br-0041+gdbd98b1a5fd1`, soak).
+- **M5 gate PASS**: S28 rail started the listener at boot (babysitter +
+  `dropbear -F` running); hostkey persisted to /data/br/dropbear; key auth
+  + data transfer through :2223 OK from the host; stock dropbear :2222
+  unaffected; M4 strip intact (spot-checked).
+- Cleanup: flag removed; **committed=1=booted**, valid 1,2, seq 31,30.
+  Slot 2 = br-0040 fallback.
+
+**M5 candidate 1 (modern dropbear parallel listener) is DONE per the
+go-no-go plan's stage (i).** Next M5 candidates: busybox-owned-by-Buildroot,
+openssl + dependents, lighttpd/webui-go — each its own trial. Promotion of
+the new dropbear to primary (port swap) deliberately deferred until it has
+soaked across several reboots/days.
