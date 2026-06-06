@@ -410,3 +410,30 @@ retirement stays kill+firewall-based (webui already does this).
 
 Operator directives recorded: full autonomy, never ask questions; nmap
 installed on the build host for AP discovery after lease churn.
+
+---
+
+## 2026-06-06 09:57 + 10:02 — MAC-fix reboot + FLASH #6 (br-0034): GATE 20/20, COMMITTED — new baseline
+
+1. **MAC-fix reboot (09:57):** after the nvram baseline restore the device
+   returned at **10.0.0.8** (old reservation re-engaged) with factory MAC
+   `60:cf:84:38:87:b0` on br0 and factory-derived BSSIDs; zero BSP-MAC vars
+   left in nvram. Gate --quick 18/18.
+2. **br-0034 trial (10:02):** `d1b40b0f…ade3` → slot 2 via the v2 harness.
+   Nominal sequence (ONCE 4/4 lifetime). **v2 features verified live:**
+   dead-man ran from the **/data** flag (ARMED on trial slot 2, DISARMED at
+   T+20s by the host driver) and the **S27 breadcrumb logger started at
+   uptime 9 s** (29 snapshots by verification time) — the forensics that
+   were missing during the br-0033 hang.
+   Gate: **20/20 PASS** (incl. identity `release=br-0034+gb0a372ad6b71`).
+   Trial flag removed; init self-commit left **committed=2=booted** ✓.
+
+**Device baseline now: br-0034 on slot 2 (committed, validated). Slot 1 =
+br-0032 (gate-validated 2×) as fallback.** All M4 slice trials build on
+this: any slow/broken boot now leaves breadcrumbs on /data and the dead-man
+no longer depends on rc mounting /jffs.
+
+Day totals: 6 flashes, 7 reboots (heavier than the §3 target — justified by
+the incident recovery and operator's explicit full-autonomy green light;
+user-visible outage limited to the ~11-min br-0033 cycle + three ~3-min
+reboots).
