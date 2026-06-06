@@ -585,3 +585,57 @@ re-test by re-application).
 binary-removal groups of batch-1 now individually cleared.** Slice 6
 (re_mode-only amas crew) runs next for full batch-1 parity; after that the
 only untested br-0033 ingredient is the envrams wrapper+rename.
+
+---
+
+## 2026-06-06 13:07–13:21 — FLASH #12 (M4 slice 6): br-0040 → slot 2 — GATE 20/20, COMMITTED — **M4 STRIP COMPLETE**
+
+- Image: `GT-BE98_br-0040_nand_squashfs.pkgtb` `730badb6…474b` = br-0039 −
+  re_mode-only amas crew `/sbin/{amas_bhctrl,amas_ssd,amas_status,
+  amas_misc,amas_wlcconnect}` (all → rc; re_mode=0; none running).
+  Diff proof exact (5 symlinks + marker). Tree `1592d42e1d3a`.
+- Trial nominal (ONCE 10/10): slot 2 → repair `+1` → ONCE → reboot 13:07 →
+  booted slot 2; dead-man ARMED (sha ok) → auto-DISARMED T+5s.
+- **Gate: 20/20 PASS** (identity `br-0040+g1592d42e1d3a`, soak).
+- **Slice gate PASS**: 5 symlinks absent, all 17 earlier removals absent,
+  `/sbin/rc` intact, keep-list verified (wanduck present+running, usbmuxd
+  RUNNING at `/usr/bin/usbmuxd` — disposition doc's /usr/sbin path was
+  wrong, binary untouched —, amas_ipc present), webui alive, no spam.
+- Cleanup: flag removed; **committed=2=booted**, valid 1,2, seq 29,30,
+  reset_reason 0x34, factory MAC intact, zero BSP-MAC nvram vars.
+
+**M4 COMPLETE: cumulative strip = 22 paths** (12 binaries + 1 data dir
+[4 files] + 10 rc/lighttpd symlinks) = **full br-0033 batch-1 parity minus
+the envrams wrapper+rename**. Six slices, six trials, six gate-20/20
+passes, zero failures, zero incidents.
+
+### br-0033 ROOT CAUSE — concluded by elimination (6-slice bisect, 2026-06-06)
+
+Every file-removal group of the br-0033 batch booted clean when applied
+incrementally on the v2 harness:
+1. telemetry/cloud (infosvr awsiot mastiff asd wsdd2) — br-0035 ✓
+2. networkmap + uamsrv — br-0036 ✓
+3. cfg_server/wlc_nt/lldpd — br-0037 ✓
+4. amas rc-symlinks (lanctrl portstatus ssd_cd conn_diag) — br-0038 ✓
+5. bsd/roamast — br-0039 ✓
+6. re_mode amas crew (bhctrl ssd status misc wlcconnect) — br-0040 ✓
+
+br-0040 ≡ br-0033 minus exactly one ingredient: the **envrams
+wrapper-gate + rename to envrams.real**. Conclusion: **the envrams wrapper
+caused the br-0033 failure** — mechanism already proven independently
+(envram get et0macaddr returned empty ⇒ BSP base-MAC fallback
+20:cf:30:00:00:00 ⇒ nvram-committed MAC poisoning ⇒ broken DHCP
+reservation/LAN identity ⇒ the "slow boot, network broken" trial symptom
+and the post-rollback lease churn). Caveat for the record: group
+interactions were not re-tested in combination beyond the cumulative
+stack, but cumulative br-0040 == batch-1 minus wrapper booting clean makes
+any non-wrapper explanation require an interaction WITH the wrapper —
+moot, since the wrapper is banned. envrams retirement remains
+kill+firewall-based; the wrapper is never to be re-applied
+(m4-staging/README.md).
+
+Day totals (2026-06-06): 12 flashes, 13 reboots across two sessions —
+operator explicitly waived the ≤3/day cap ("go ahead" after budget
+report); user-visible outage ≈ 6 × 3 min today (slices), all gates green,
+both slots end on gate-validated images (br-0040 committed slot 2,
+br-0039 fallback slot 1).
