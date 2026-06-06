@@ -671,3 +671,50 @@ go-no-go plan's stage (i).** Next M5 candidates: busybox-owned-by-Buildroot,
 openssl + dependents, lighttpd/webui-go — each its own trial. Promotion of
 the new dropbear to primary (port swap) deliberately deferred until it has
 soaked across several reboots/days.
+
+---
+
+## 2026-06-06 ~14:20 — wanduck investigation (read-only, on br-0041)
+
+Live recon (no changes): `/sbin/wanduck -> rc` (multicall symlink, like the
+amas crew), running at 4.3 MB RSS, started unconditionally by rc even in
+sw_mode=3. Listens on **0.0.0.0:18017** = the ASUS "no internet" captive
+redirect server; periodic self-connections (TIME_WAIT on lo) = its own
+health/probe loop. Probe knobs all off on this AP: `wandog_enable=0`,
+`dns_probe=0`; `link_internet=2` (state "connected" — wanduck OWNS this
+nvram var, which the webUI internet-status indicator and various rc paths
+read). ~103 wanduck references inside rc; quiet in syslog.
+
+Disposition: in AP mode its only useful outputs are `link_internet` upkeep
+and the :18017 redirect. Removing the symlink is mechanically identical to
+the amas slices, BUT webUI behavior depends on `link_internet` freshness —
+**removal stays deferred and must be bundled with the webui-go/admin-path
+validation work** (check the UI tolerates a stale/absent link_internet).
+Not worth a slice for 4.3 MB RSS now. KEEP verdict unchanged, now
+evidence-based.
+
+---
+
+## 2026-06-06 14:18–14:33 — FLASH #14 (M5 candidate 2): br-0042 → slot 2 — GATE 20/20, COMMITTED — Buildroot busybox beside ASUS
+
+- Image: `GT-BE98_br-0042_nand_squashfs.pkgtb` `ec628571…cde1` = br-0041 +
+  busybox 1.37.0 static (2.0 MB) at `/usr/br/bin/busybox` + 401 applet
+  symlinks under `/usr/br/{bin,sbin}` (INSTALL_NO_USR; stray linuxrc
+  dropped). Diff proof: 1 ADDED file + 401 symlinks, ALL under /usr/br,
+  marker CHANGED, nothing else. Tree `a5504e9129a9`.
+- Build note: 1.37.0's `CONFIG_SHA*_HWACCEL` is x86-only code misgated on
+  ARM (link error) — disabled. De-risk pattern applied: applets
+  live-tested from /tmp on br-0041 before staging (busybox dispatches on
+  argv[0] — test binary must be NAMED busybox).
+- Trial nominal (ONCE 12/12): slot 2 → repair `+1` → ONCE → reboot 14:18 →
+  booted slot 2; dead-man ARMED (sha ok) → auto-DISARMED T+10s.
+- **Gate: 20/20 PASS** (identity `br-0042+ga5504e9129a9`, soak).
+- **Slice gate PASS**: image busybox + applet links work (ash/vi via
+  PATH=/usr/br/bin), ASUS `/bin/busybox` byte-untouched, dropbear :2223
+  up (S28 rail survived), M4 strip intact, webui alive.
+- Cleanup: flag removed; **committed=2=booted**, valid 1,2, seq 31,32.
+  Slot 1 = br-0041 fallback.
+
+**M5 candidate 2 (busybox-owned-by-Buildroot) DONE.** Next: openssl CLI
+(candidate 3), then lighttpd/webui-go (own session — needs admin-path
+validation).
