@@ -437,3 +437,39 @@ Day totals: 6 flashes, 7 reboots (heavier than the §3 target — justified by
 the incident recovery and operator's explicit full-autonomy green light;
 user-visible outage limited to the ~11-min br-0033 cycle + three ~3-min
 reboots).
+
+---
+
+## 2026-06-06 11:42–11:57 — FLASH #7 (M4 slice 1): br-0035 → slot 1 — GATE 20/20, COMMITTED
+
+- Image: `GT-BE98_br-0035_nand_squashfs.pkgtb` sha256 `fb909b7d…18d0`
+  (archived). Content = br-0034 − 5 removals (M4 slice 1, telemetry/cloud:
+  `/usr/sbin/infosvr /usr/sbin/awsiot /usr/sbin/mastiff /usr/bin/asd
+  /usr/sbin/wsdd2`). Tree `a3a4c41882b4` (RELEASE+list committed pre-build).
+- **Local diff proof** vs br-0034 rootfs (extracted from the archived pkgtb
+  via dumpimage): exactly 5 REMOVED + release marker CHANGED, 0 ADDED,
+  no symlink changes (directory-inode size jitter = squashfs renumbering).
+  Size delta ≈ −285 KB (62M → 61M packed). Removed manifest: infosvr 26396,
+  wsdd2 47576, asd 67556, awsiot 72396, mastiff 77512 bytes.
+- Trial sequence nominal (v2 harness, ONCE 5/5 lifetime): preflight OK →
+  flash slot 1 (hnd-write exit 99, auto-commit → repaired `+2`) → ONCE
+  armed → reboot 11:42. SSH answered ~2.5 min; **dead-man ARMED on trial
+  slot 1 (correct sha) → auto-DISARMED at T+5s** by the watcher; S27
+  breadcrumbs logging from uptime 9 s.
+- **Gate: 20/20 PASS** (incl. identity `br-0035+ga3a4c41882b4`, 3-min soak).
+- **Slice-specific gate PASS**: all 5 binaries absent from disk, no matching
+  processes, no exec-failure/respawn spam in dmesg/syslog, webui alive
+  (httpd up; :8080 on lo+LAN and :80 — NB `/Main_Login.asp` returns non-200
+  to busybox wget, probe `/` instead).
+- Operator cleanup: flag removed; init self-commit had promoted slot 1
+  (**committed=1=booted**, valid 1,2, seq 25,24, reset_reason 0x34).
+
+**Bisect datum: the telemetry/cloud group is NOT the br-0033 culprit**
+(boot speed normal, LAN/route fine). Remaining suspects: networkmap/uamsrv,
+cfg ecosystem (cfg_server/wlc_nt/lldpd), amas symlinks, bsd/roamast — and
+the (banned) envrams wrapper, still the prime suspect.
+
+**Device baseline: br-0035 on slot 1 (committed, validated). Slot 2 =
+br-0034 (gate 20/20) fallback.** Trial-cycle budget note: this is the 2nd
+cycle today (br-0034 was the 1st); midday slot chosen deliberately under
+the full-autonomy mandate — outage ≈ 3 min, justified by slice cadence.
