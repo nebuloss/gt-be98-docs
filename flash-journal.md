@@ -1292,3 +1292,76 @@ the orthogonal rescue; `nvram set gtbe98_httpd=1; nvram commit; reboot` resurrec
 stock httpd on :80 (binary still on-image). Left for webui owners: review/merge/
 push `feat/p2-6-bind-80`. Carry-forward: a fresh deploy to a device whose
 admin.conf still pins a non-80 AP row needs `update_admin_portal …port=80`.
+
+---
+
+## 2026-06-07 — FROM-SOURCE NVRAM flash TRIAL → **FAILED (boot does not complete)** → rolled back to br-0049 baseline
+
+**FIRST flash-trial of a from-source core component: the clean-room open nvram
+client (`bin/nvram` + `lib/libnvram.so`).** Image = **br-0049 with EXACTLY the 2
+nvram files swapped** for the clean-room versions (image-diff proven; same
+bootfs/boot-chain as br-0049). Artifact
+`~/be98/artifacts-br/GT-BE98_fromsrc-nvram_nand_squashfs.pkgtb`, sha256
+**`f39fda240465acf34d5c3aa91e3318071b77dceaf046d07f30d55e33e90b8692`**
+(83,210,952 B; rootfs 69,881,856 B, under slot-2 ceiling). Built WITH the three
+committed clean-room fix rounds (buildroot `de97993` getall paging, `deb4acc`
+kernelset/restore_mfg+bitflag+guards, `3025f94` cross-process commit + bitflag CLI).
+
+**Harness (same as br-0047/48/49, `trial-flash.sh --window 600`, no `--reboot`):**
+pre-trial baseline captured on br-0049 (slot 2, committed 2): gate 18/0, 4 radios
+up, 11 hostapd, 7 named BSSes (Ramondia/Pagoa/DEV-SCEP), :2222+:2223+:80 up, agent
+key in nvram `sshd_authkeys`. Hopped to **slot 1 (br-0045)** as the dead-man GOOD
+fallback — note: a direct `bcm_bootstate 3` from committed=2 does NOT boot slot 1
+(it commits the lower-seq image and ONCE-targets the higher-seq slot 2); the
+deterministic hop was **disarm ONCE (`echo steadystate`) → committed=1 already set
+→ plain reboot boots committed slot 1**. Then flashed slot 2 with the from-source
+image (hnd-write exit=99, auto-commit 2 → repair-commit 1), armed dead-man
+(TRIAL=2 GOOD=1 WINDOW=600 SHA=f39fda24…), ONCE, reboot.
+
+**FAILURE — slot-2 boot does not complete (evidence from
+`/data/boot-breadcrumb.log.prev`, cmdline `ubi.block=0,6`):** the from-source
+image booted through early init — S27 breadcrumb, S28 br-dropbear, `envrams`,
+`umount /mnt/defaults`, then **dhd wifi-driver insmod + wl firmware load at T+49s
+(uptime 49s)**. So **`rc` started and drove early init → the prior code-audit
+boot-breaker "rc won't start (unresolved `nvram_get_bitflag`)" is RESOLVED in this
+image.** But the breadcrumb **never reached its T+60s sample** → the boot died
+between ~T+49s and T+60s — the stage where the S40 `hndnvram.sh`
+(`nvram kernelset /data/.kernel_nvram.setting`) kernel-tree populate + the
+nvram-driven service/wifi bring-up run. The device **never became
+network/SSH-reachable on slot 2**.
+
+**RECOVERY (clean, automatic):** the bootloader fell back to the committed GOOD
+slot 1 — **ONCE consumed (`reset_reason=34`), `boot_failed_count=0`**, device up
+on **slot 1 (br-0045)** within ~3 min. The 600s dead-man window did NOT need to
+elapse: the boot self-terminated early and the committed-slot fallback recovered
+us. (The S26 dead-man left no synced `sha=f39fda24…` ARMED line — consistent with
+a hard reset before the ubifs log flush; the slot-1 good-slot dead-man branch DID
+run + re-committed slot 1 at 14:59:31, proving the harness engaged.) No serial
+console available → exact panic/hang reason not pinned beyond "fails after driver
+load, in the nvram-populate / service-config stage."
+
+**ROLLBACK to baseline:** removed `/data/.trial-armed`, transferred + sha-verified
+the br-0049 RESTORE artifact
+(`d989aa3a05d1f3c4444808494d5d2551813c14d602cc859202bef38605552a4a`), `hnd-write`
+→ slot 2 (auto-commit 2), plain reboot → **slot 2 br-0049 healthy**.
+
+**END STATE (verified) = pre-trial baseline:** booted slot 2 **br-0049**
+(`br-0049+gf6d8e4f63427`, blob 0034), **committed 2 valid 1,2 seq 35,36**,
+`reset_reason=34`, `boot_failed_count=0`, **no `/data/.trial-armed`**, slot 1 =
+br-0045 fallback. **gate-check 18/0**; nvram vars all == pre-trial (lan_ipaddr=
+10.0.0.8 etc.); wifi identical (4 radios up, 11 hostapd, 7 named BSSes); SSH
+:2222+:2223 + webui :80→200. **`/jffs` UNTOUCHED** throughout — webui binary md5
+`a4857fce30970ef68d7e6e878f587585` unchanged pre/post. No MAC values read or printed.
+
+**VERDICT: FAIL (documented), device safe on the committed br-0049 baseline.**
+**Fix path:** rc-start is fixed; the remaining boot-breaker is in the on-boot
+nvram kernel-tree populate / nvram-driven service bring-up. Next: (1) capture the
+**serial console** during a slot-2 boot for the exact panic/hang (the 20s
+breadcrumb cadence is too coarse — also instrument S40 `hndnvram.sh` to log the
+`nvram kernelset` result to /data and dump dmesg to /data at T+50-70s); (2)
+re-confirm the cross-process `nvram commit` (Round-2) + getall paging fixes are
+actually exercised by the real S40 populate path on hardware, not just the
+isolated bench; (3) re-trial once the populate stage is instrumented + green.
+Carry-forward caveat: the benign clean-room **`nvram getall` enumeration** quirk
+(reaches keyspace end now, but historically truncation-prone) remains worth a
+watch on any commit-from-getall path.
