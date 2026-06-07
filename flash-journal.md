@@ -1229,3 +1229,66 @@ pre-existing `wanduck_down=1`. nvram agent key persisted; NO `service restart_*`
   the gate lands ONLY in `start_wlc_nt()`; that would let the `wlc_nt_enable=1`
   workaround be dropped. Until then, any fresh image on blob 0034 needs
   `wlc_nt_enable=1` for wlceventd.
+
+---
+
+## 2026-06-07 — P2-6 (:80 cutover, option 1a): webui binds :80 DIRECTLY, redirect DROPPED (LIVE /jffs deploy, NO flash, NO reboot)
+
+**NOT a flash.** Live webui-go deploy to `/jffs` on the committed **br-0049**
+baseline (slot 2 unchanged; `ubi.block=0,6`; `/data/.trial-armed` absent =
+no trial armed). Cutover done over SSH :2222; no `service restart_*`, no reboot.
+
+**Change:** the Go webui now **binds :80 directly** instead of relying on the
+webui-owned `:80→:8080` nat REDIRECT (the br-0049 finding). webui-go branch
+`feat/p2-6-bind-80` commit **`eb80aa7`**: `services-start` `-listen :8080`→`:80`;
+`boothooks.go applyFirewallRules()` drops the redirect `-A` add (keeps a
+delete-only scrub of any stale rule); `adminbind_actions.go validAdminPort()`
+stops refusing port 80; loopback notify port→:80 in `firewall-start`/
+`service-event`/`deploy/push.sh`. Branch NOT merged/pushed (left for webui owners).
+
+**Binary:** static ARMv7 (`CGO_ENABLED=0 GOARCH=arm GOARM=7`, ver `eb80aa7`),
+sha256 `0f3c6c7a9e071e9ed87c207bc2904bfe5fe29c6da2ef879e5b59695e1acb67bc`,
+11468962 B → `/jffs/webui/webui`. Backups on device:
+`/jffs/webui/webui.p2-6-bak` (prev sha `160ccb72…`) +
+`/jffs/scripts/{services-start,firewall-start,service-event}.p2-6-bak`.
+
+**Pre-flight (read-only, matched expectations):** webui on :8080 (10.0.0.8:8080 +
+127.0.0.1:8080), httpd ABSENT, nat PREROUTING had the `dport80 REDIRECT→8080`
+(webui-owned) + captive `br70 dport80→10.0.70.55:8082` DNAT, `gtbe98_httpd` unset,
+`wlc_nt_enable=1`, SSH :2222 + :2223 up, 11 hostapd (4 stock + 7 webui-hapd).
+
+**Spec gaps hit (and fixed live):** `-listen :80` alone left the public admin on
+`10.0.0.8:8080` because the persisted `admin.conf` AP row (`AP_1_PORT=8080`)
+governs the public bind, not `-listen` (which drives only the loopback lifeline +
+default-for-new-portals); and `validAdminPort` hard-refused 80. Relaxed the guard
+in source, then `update_admin_portal id=1 port=80` (persisted in webui.db) →
+portal rebound to `10.0.0.8:80`.
+
+**VALIDATION — all PASS:**
+- `netstat`: webui pid owns **10.0.0.8:80** + **127.0.0.1:80** directly; `:8080`
+  CLOSED.
+- `iptables -t nat -L PREROUTING`: **no REDIRECT** — only the captive `br70
+  dport80→10.0.70.55:8082` DNAT (unaffected; position-1 PREROUTING DNAT fires
+  before local delivery, independent of the dropped global redirect).
+- Host `curl http://10.0.0.8:80/` → **200, 0 redirect hops**, `<title>GT-BE98</title>`.
+  `curl :8080` → connection refused (000). Bearer API `get_sysinfo` + `auth_status`
+  on :80 → 200 authed.
+- httpd ABSENT; `last_httpd_handle_request` FROZEN empty.
+- WIFI INTACT: wl0-3 up; 11 hostapd (4 stock + 7 webui-hapd); 7 named BSSes
+  (Ramondia x3 / Pagoa x1 / DEV-SCEP x3) + test/captive br70; `/tmp/webui-hapd`
+  7 confs intact (webui re-applied its config on restart — normal for the single
+  production instance).
+- SSH :2222 + :2223 both up. Loopback notify on :80 proven: `firewall-start` stub
+  → `firewall-event: … re-applying webui rules` logged; no redirect re-added.
+
+**SOAK (~10 min, 09:55→10:04, 6 samples):** webui pid **19697 stable** the whole
+window, `10.0.0.8:80` bound every sample, hostapd **11** (no flap), redirect rules
+**0**, httpd ABSENT, `last_httpd_handle_request` empty throughout. No flap.
+
+**VERDICT: LIVE on :80 (direct bind), ACCEPTED.** Rollback path (unused): restore
+`*.p2-6-bak` + re-run `services-start` → webui back on :8080 with the redirect
+re-added (the pre-1a binary's `applyFirewallRules` re-adds it on start). SSH is
+the orthogonal rescue; `nvram set gtbe98_httpd=1; nvram commit; reboot` resurrects
+stock httpd on :80 (binary still on-image). Left for webui owners: review/merge/
+push `feat/p2-6-bind-80`. Carry-forward: a fresh deploy to a device whose
+admin.conf still pins a non-80 AP row needs `update_admin_portal …port=80`.
