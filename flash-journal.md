@@ -1365,3 +1365,80 @@ isolated bench; (3) re-trial once the populate stage is instrumented + green.
 Carry-forward caveat: the benign clean-room **`nvram getall` enumeration** quirk
 (reaches keyspace end now, but historically truncation-prone) remains worth a
 watch on any commit-from-getall path.
+
+---
+
+## 2026-06-07 — br-0050 (blob 0035: watchdog debug_monitor gate + patch-0029 tighter re-fix) — PASS, COMMITTED
+
+**Image:** `~/be98/artifacts-br/GT-BE98_blob0035_nand_squashfs.pkgtb`, sha256
+`9a723b5aa889875f0ce3f54c5a4a2f2dd3a499bb2124d6727e82c0229cab791d`, 83,223,240 B;
+embedded `rootfs.squashfs` 69,894,144 B (1.16 MB under the slot-2 ceiling
+71,106,560). `release=blob0035`, `rootfs_blob=0035 bootfs_blob=0031` (br-0049 boot
+chain unchanged). Slot 2 (trial), good slot 1 = br-0045 (seq 37). Source merlin
+blob `gt-be98-firmware/artifacts-0035/rootfs.img` sha256
+`c9d4e776a63ad245b35d46567e5382c35d3b786112db848d07a93ce8f7abb1b6` (`./build.sh
+clean` 2026-06-07, pinned upstream `ad42d5e81a53`).
+
+**What it is:** the on-device gate to the **open-wifi-sole-supervisor** OS
+(webui-go owning hostapd). blob-0034 lineage (patches 0024-0031 + 0033 + 0034;
+0032 still EXCLUDED — banned envrams-wrapper) PLUS:
+- **patch 0035 (watchdog gate)** — `gtbe98_wifi_extsup` folded into the
+  `debug_monitor` respawn condition in `watchdog()` (rc/watchdog.c). Default-OFF
+  (absent/0 = stock verbatim). `=1` → the watchdog stops respawning
+  `debug_monitor`, leaving the webui-go controller the sole hostapd supervisor.
+  Companion of `webui_radio_init=1`. **Ships DORMANT.**
+- **patch 0029 tighter re-apply** — the `wlc_nt_enable` gate now lands ONLY in
+  `start_wlc_nt()` (services.c). blob 0034's fuzzy `-F 10` apply mis-landed it in
+  the near-twin `start_wlceventd()`/`start_wlc_monitor()` too (identical leading
+  context), which broke wlceventd at first boot (br-0049 carried a committed
+  `nvram wlc_nt_enable=1` crutch). Fix: extend hunk-1 context to the unique
+  `char *ev_argv[] = {"/usr/sbin/wlc_nt", NULL};` line → only fuzz-0 match is
+  `start_wlc_nt()`.
+
+⚠ **Build flag:** a naive `./build.sh` re-applies 0032 by default; it MUST be
+reverse-applied + moved aside before the build (as blob 0034 did), else the blob
+is poisoned (br-0033 MAC-poisoning lineage).
+
+**Diff-proof GREEN (offline, vs br-0049 blob 0034, full_defconfig, isolated
+output dir):** ONLY functional binary delta = `/sbin/rc` (carries the 0035 gate +
+the 0029 fix; `gtbe98_wifi_extsup` string new-only). Marker/date stamps +
+blob-rebuild compile-date noise (busybox/libshared/lighttpd/miniupnpd/modules.dep)
++ 6-8-byte `/usr/br` island build-date noise (fresh rebuild) = benign, same class
+as br-0049's noise. **WIFI-CORE BYTE-IDENTICAL** (eapd/mcpd/wlceventd/hostapd/
+dhd.ko/wl.ko).
+
+**Flash technique — seq-bump slot-positioning + dead-man trial:** device was on
+committed slot 2 (br-0049) → slot 2 unflashable. To free slot 2 while keeping a
+GOOD committed fallback, **seq-bumped slot 1**: `hnd-write` br-0045 → slot 1
+(refreshes its seq above slot 2), rebooted, **booted slot 1 GOOD** (committed
+br-0045 as the dead-man anchor). Then `trial-flash.sh blob0035` → slot 2
+(hnd-write + commit-repair back to slot 1 + arm ONCE) → reboot → SSH on slot 2 →
+**disarm dead-man + gate** → commit slot 2. Slot 1 = br-0045 (seq 37) remains the
+fallback.
+
+**Gate 19/0 PASS** + **3-min daemon-pid soak clean.** **wlceventd up at first
+boot with NO nvram workaround** — the patch-0029 fix landed (the br-0049
+`wlc_nt_enable=1` crutch is no longer required). 4 radios up, named BSSes present
+(Ramondia/Pagoa/DEV-SCEP), 11 hostapd, jffs rw, boot_failed_count=0, dmesg clean.
+
+**Watchdog-gate VALIDATED LIVE:** with the trial slot committed, flipped
+`nvram set gtbe98_wifi_extsup=1` on-device and confirmed the watchdog
+**stopped respawning `debug_monitor`** (its hostapd-respawn path gated) — the
+load-bearing 0035 behaviour. Flag reverted to default-OFF after validation; the
+committed baseline ships DORMANT (behaviourally == br-0049).
+
+**ACCEPTED.** br-0050 = new committed baseline (slot 2); br-0045 stays valid on
+slot 1 as fallback. nvram agent key persisted; NO `service restart_*`.
+
+**Commits:** `gt-be98-firmware cf44a36` (patch 0029 tighten); `gt-be98-buildroot
+5a28121` (gt-be98-rootfs → blob 0035, branch `blob-0035`; tarball sha256
+`8da2951a72d6837a6dcebc0fff25c5540d70f00a089eb7fcf2190b1c1129d489`); manifest
+entry `gt-be98-packages manifests/gt-be98-rootfs.yaml` → 0035. **GitHub release
+`rootfs-0035` NOT published this run — operator owns the outward release.**
+
+**HANDOFF — open-wifi-sole-supervisor deploy is STAGED, not done.** br-0050 is
+the dormant on-device gate. Next (no flash needed): deploy the EnsureRadio webui +
+arm `gtbe98_wifi_extsup=1` + `webui_radio_init=1` so webui-go owns the 4 wifi
+primaries. REVERSIBLE staged plan in the buildroot repo
+`job-tmp/open-wifi-sole-supervisor-DEPLOY-PLAN.md`. ⚠ The
+boot-reconcile-owns-primaries path is UNTESTED on a real boot → live-test first.
