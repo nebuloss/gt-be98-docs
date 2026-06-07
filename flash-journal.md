@@ -1114,3 +1114,118 @@ nvram. nvram agent key persisted throughout; NO `service restart_*` run.
 **Phase-2 Pattern-B campaign COMPLETE.** Remaining RETIRE = {sched_daemon}
 (UNGATED watchdog respawn → needs new merlin blob 0034 gate, Phase-2b, br-0049);
 DRAIN {httpd, dnsmasq} need the 0033 blob / rails (Phase-2b/2c).
+
+---
+
+## 2026-06-07 — br-0049 (Phase-2b: blob 0034, httpd + sched_daemon source-gated OFF) — PASS, COMMITTED
+
+**Image:** `GT-BE98_br-0049_nand_squashfs.pkgtb`, sha256
+`d989aa3a05d1f3c4444808494d5d2551813c14d602cc859202bef38605552a4a`, 83223240 B.
+Release marker `br-0049+gf6d8e4f63427`, `rootfs_blob=0034 bootfs_blob=0031`.
+Slot 2 (trial), good slot 1 = br-0045. **FIRST image on the new Phase-2b rootfs
+blob 0034.**
+
+**What it is:** the Phase-2b **P2-5** slice — the first image built on the new
+merlin rootfs blob 0034 (published this run as nebuloss/gt-be98-packages release
+`rootfs-0034`, asset sha256 `8b9dcf7f…37fc0`, public download-URL sha
+re-verified before any .mk edit; bootfs intentionally stays 0031, the validated
+boot chain, not re-published). Blob carries merlin patches 0024-0031 + **0033
+(gtbe98_httpd gate)** + **0034 (gtbe98_sched_daemon gate)**; 0032 excluded
+(banned envrams-wrapper). Both gates default-OFF: stock `/usr/sbin/httpd` and
+`/sbin/sched_daemon` ELFs remain present in the rootfs but their start funnels
+AND watchdog respawns early-return. This **kills the watchdog
+`httpd_check()` nvram_commit() flash-wear churn at the source** — the load-bearing
+P2-5 goal — and is the prerequisite for the :80 cutover (P2-6).
+
+**Build + diff-proof GREEN.** `make gt-be98-rootfs-dirclean && make` →
+rootfs.squashfs 69,894,144 B (1.2 MB under the slot-2 ceiling 71,106,560;
+slot-1 good slot 67,805,184 unchanged). NOTE: the first build reused a stale
+gt-be98-rootfs-0031 extraction dir (transform picked the old blob, rc unchanged);
+`rm -rf output/build/gt-be98-rootfs-0031` + rebuild fixed it — rc then carried
+the gate strings. Always dirclean the OLD blob dir on a version bump.
+- **(a) vs blob 0034:** 29/29 cumulative remove.list paths removed (typo-guard
+  green); `/usr/br` island BYTE-IDENTICAL to br-0048; rails intact; marker
+  `blobs=0034/0031`.
+- **(b) vs br-0048 artifact** (host unsquashfs, 10 content deltas, all
+  classified): `/rom/etc/gt-be98-release` (intended stamp); **`/sbin/rc`** — THE
+  SLICE: gate strings `gtbe98_httpd`+`gtbe98_sched_daemon` present in br-0049 rc
+  (sha `768e18a5…`, == staged rc.patched), ABSENT in br-0048 rc (`98fb44fe…`);
+  benign blob-rebuild compile-date noise in `/bin/busybox` (21 B), `/usr/lib/
+  libshared.so` (10 B), `/usr/sbin/lighttpd` (14 B), `/usr/sbin/miniupnpd` (6 B),
+  `/rom/etc/{build_time,image_version,motd}` (date stamps), `lib/modules/4.19.294/
+  modules.dep` (depmod within-line dep ordering; sorted module set identical).
+  **WIFI-CORE BYTE-IDENTICAL** (required gate): `eapd mcpd wlceventd hostapd
+  dhd.ko wl.ko` and ALL kernel `.ko` identical, same module set. bootfs `.itb`
+  byte-identical to br-0048 (`81f38fe0…` = validated 0031).
+
+**Slot-1-hop first:** device on slot 2 (br-0048, committed 2) → unflashable.
+`bcm_bootstate +1` → reboot → booted slot 1 (br-0045, cmdline 0,4,
+booted==committed=1).
+
+**Trial (proven harness):** `trial-flash.sh --window 600` (no `--reboot`) from
+slot 1. dead-man armed (TRIAL_SLOT=2 GOOD_SLOT=1 WINDOW=600 SHA=d989aa3a…,
+read-back verified) → hnd-write slot 2 (exit 99, auto-commit 2) → commit
+repaired to slot 1 → ONCE (`bcm_bootstate 3`, RR→1) → plain `reboot`. SSH
+answered on slot 2 at ~+112 s; auto-disarm poll touched `/tmp/deadman-disarm`
+(`/data/trial-deadman.log`: ARMED slot 2 sha=d989aa3a → DISARMED at T+10s). ASUS
+init self-committed slot 2.
+
+**REGRESSION found + root-caused + fixed (NOT a 0033/0034 issue):** on the first
+trial boot, gate-check flagged **wlceventd not running** (18/2; the other FAIL
+was a stale `--expect-sha` arg, the marker carries the rootfs.img sha not the
+pkgtb sha — re-run without it was 19/0). Root cause: in the *freshly built* blob
+0034, **patch 0029's `wlc_nt_enable` gate (intended only for `start_wlc_nt()`)
+fuzzily mis-applied** (apply log: "Hunk #1 succeeded at 4095, offset -178 lines,
+fuzz 2") and landed inside `start_wlceventd()` AND `start_wlc_monitor()` too —
+the three funcs have near-identical bodies. So blob 0034's rc gates wlceventd on
+`wlc_nt_enable` (empty on this device) → wlceventd never starts. blob 0031
+(br-0048) was extracted from a validated merlin build where 0029 applied cleanly,
+so it did NOT have this — a genuine **blob-rebuild divergence with a functional
+effect** (the exact "rebuild-noise" risk class, here in rc rather than a leaf
+binary). No watchdog involvement (watchdog.c has no wlceventd/wlc_nt logic).
+**Fix:** `nvram set wlc_nt_enable=1; nvram commit` (persists in device nvram,
+same pattern as br-0048's `wanduck_down=1`). wlc_nt/wlc_monitor binaries were
+already removed (br-0047), so their now-ungated start attempts no-op (start-only,
+no respawn) — confirmed zero `wlc_nt|wlc_monitor` syslog spam. Rebooted: wlceventd
+up at boot, stable pid across the soak.
+
+**Gate 19/0 PASS** (third boot, post-fix): slot==2, identity
+`br-0049+gf6d8e4f63427`, 4 radios up, Ramondia/Pagoa/DEV-SCEP present, 11
+hostapd, br0 IP, jffs rw, eapd/**wlceventd**/mcpd/watchdog up, boot_failed_count=0,
+dmesg clean, 3-min daemon-pid soak stable.
+
+**P2-5 SLICE CHECKS — all PASS:**
+- **`nvram get last_httpd_handle_request` FROZEN empty** at boot+1min AND after
+  the 10-min soak (the load-bearing flash-wear check; also `_fromapp` empty).
+  This is the watchdog `httpd_check()` nvram_commit() churn dead at the source.
+- **httpd ABSENT** from ps, **sched_daemon ABSENT** from ps; ZERO
+  `httpd_check|sched_daemon|respawn|exec-fail` matches in the 10-min syslog soak.
+- **`:80` STILL SERVES THE WEBUI** (P2-6-relevant finding): host `curl :80` →
+  200, 51655 B, `<title>GT-BE98</title>` (the webui-go page) — IDENTICAL to the
+  br-0048 baseline. Mechanism: nat `PREROUTING -p tcp --dport 80 -j REDIRECT
+  --to-ports 8080` (+ a `br70 → 10.0.70.55:8082` DNAT) was NEVER httpd's; it
+  redirects to webui-go on :8080. Stock httpd was only ever a local :80 LISTEN
+  that the redirect bypassed. So **removing/gating httpd does NOT break :80** —
+  the redirect is webui-owned and independent. webui :8080 → 200. SSH :2222 is
+  the rescue path regardless.
+- **WIFI IDENTICAL to the br-0048 baseline** (normalized, volatile pids
+  stripped): wl0-3 isup =1; br0/br20/br30/br50/br70 byte-identical; 11 hostapd
+  (4 stock + 7 webui); 7 named BSSes ENABLED (Ramondia/DEV-SCEP/Pagoa); 4 stock
+  primaries ENABLED. (wl1 transiently in DFS CAC at first capture → ENABLED after
+  CAC, then identical.)
+
+**ACCEPTED.** `rm /data/.trial-armed`. Final metadata: **committed 2 valid 1,2
+seq 35,36, Booted Second, reset_reason 34, boot_failed_count 0.** br-0049 = new
+committed baseline; br-0045 stays valid on slot 1 as fallback. Two nvram keys now
+committed on the device: `wlc_nt_enable=1` (the wlceventd workaround) and the
+pre-existing `wanduck_down=1`. nvram agent key persisted; NO `service restart_*`.
+
+**HANDOFF / forward queue:**
+- **P2-6 (:80 cutover) is UNBLOCKED.** Stock httpd is gone with no :80
+  regression — the :80→:8080 REDIRECT is webui-owned and already serves the UI.
+- **Blob 0034 has a latent patch-0029 mis-gate** (wlceventd/wlc_monitor gated on
+  `wlc_nt_enable` instead of only wlc_nt). br-0049 works around it with committed
+  nvram. A future blob (0035) should re-apply patch 0029 with tighter context so
+  the gate lands ONLY in `start_wlc_nt()`; that would let the `wlc_nt_enable=1`
+  workaround be dropped. Until then, any fresh image on blob 0034 needs
+  `wlc_nt_enable=1` for wlceventd.
